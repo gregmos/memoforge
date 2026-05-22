@@ -3,7 +3,7 @@
 > Multi-agent legal memo drafting plugin for **Claude Cowork** (primary) and **Claude Code** (best-effort).
 > Takes a free-form legal question, runs the full lawyer workflow — intake, research, drafting, review, polish — and ships a finished `.docx` memo.
 
-**Version:** `0.1.0` · **Author:** Grigorii Moskalev · **License:** MIT
+**Version:** `0.1.1` · **Author:** Grigorii Moskalev · **License:** MIT
 
 ---
 
@@ -186,16 +186,23 @@ Five specialists in Full mode, three in Brief. Each returns a structured JSON re
 
 ## Skills
 
-The plugin ships six skills. Three are entry points (slash commands), three are auto-loaded methodology.
+The plugin ships three slash commands. Methodology and rendering live under `lib/` as internal modules, read by the pipeline but not exposed in slash autocomplete.
 
 | Skill | Type | Purpose |
 |---|---|---|
 | `memo` | Entry (`/legal-memo-writer:memo`) | Main orchestrator. Loaded once at task start, drives the whole pipeline. |
 | `continue` | Entry (`/legal-memo-writer:continue`) | Reply to checkpoints or resume a paused task. |
 | `status` | Entry (`/legal-memo-writer:status`) | Inspect one task or list all tasks. |
-| `legal-memo-prose-style` | Auto-invoked | House style: tone, four-beat Risk pattern, definitions format, anti-AI-tells, reviewer conflict priorities. Edit this file to customize style. |
-| `legal-memo-docx-render` | Auto-invoked (Phase 11) | DOCX export: Arial 12pt, 1" margins, blockquote indent, optional yellow warning banner. Uses `md_to_docx.py` (python-docx) with Pandoc as fallback. |
-| `revision-loop` | Auto-invoked (Phase 9) | Methodology for the mode-aware revision loop (3 reviewers Brief, 5 Full; 1 iter Brief, up to 3 Full). |
+
+### Internal library modules (`lib/`)
+
+Not slash commands — the pipeline reads these via `Read` or invokes them via `Bash`. Edit them to customize behaviour.
+
+| Module | Used at | Purpose |
+|---|---|---|
+| `lib/prose-style.md` | Drafting + revision | House style: tone, four-beat Risk pattern, definitions format, anti-AI-tells, reviewer conflict priorities. Edit to customize style. |
+| `lib/docx-render/` | Phase 11 export | DOCX renderer: Arial 12pt, 1" margins, blockquote indent, optional yellow warning banner. `lib/docx-render/scripts/md_to_docx.py` (python-docx) with Pandoc as fallback; `lib/docx-render/README.md` documents the spec. |
+| `lib/revision-loop.md` | Phase 9 revision | Methodology for the mode-aware revision loop (3 reviewers Brief, 5 Full; 1 iter Brief, up to 3 Full). |
 
 ---
 
@@ -215,13 +222,13 @@ Single source of truth: `skills/memo/references/pipeline-contract.md §WebSearch
 ## Customization
 
 ### House style
-Edit `skills/legal-memo-prose-style/SKILL.md` to change:
+Edit `lib/prose-style.md` to change:
 - Default jurisdictions priority
 - Reviewer conflict priorities (default: logic ≈ citations > style > clarity)
 - Tone and confidentiality rules
 - Anti-patterns to avoid
 
-In Cowork: edit at `~/.claude/plugins/cache/legal-memo-writer/skills/legal-memo-prose-style/SKILL.md`.
+In Cowork: edit at `~/.claude/plugins/cache/legal-memo-writer/lib/prose-style.md`.
 In Claude Code dev mode: edit the file directly in your plugin source directory.
 
 ### Output folder (resolution order)

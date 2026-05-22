@@ -4,6 +4,37 @@ All notable changes to legal-memo-writer.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version line in `README.md`, `.claude-plugin/plugin.json`, the latest `dist/*.zip`, and the latest `git tag` MUST all match.
 
+## 0.1.1 — 2026-05-22
+
+**Hide internal pipeline modules from slash-command autocomplete.** Moves three "skills" out of `skills/` into a new `lib/` directory so they no longer register as `/legal-memo-writer:<name>` commands. Pipeline behaviour is unchanged.
+
+### Why
+
+`/legal-memo-writer:` autocomplete listed six commands, but only three (`memo`, `continue`, `status`) were user-facing entry points. The other three (`legal-memo-prose-style`, `legal-memo-docx-render`, `revision-loop`) were internal modules that `/memo` loaded via `Read` or invoked via `Bash` — they never needed a user-typed slash form. Showing them in autocomplete confused users into picking the wrong command.
+
+Claude Code plugin SDK has no `hidden` / `user_invocable` frontmatter flag — the loader scans `skills/` and registers every `SKILL.md` as a slash command. The only reliable mechanism to remove a skill from slash autocomplete is to move it out of `skills/`. `lib/` is the conventional name for "shared modules used by the main code"; the mental model becomes "`skills/` is what the user types; `lib/` is what the pipeline reads".
+
+### What changed
+
+- **Moved.** `skills/legal-memo-prose-style/SKILL.md` → `lib/prose-style.md`. `skills/revision-loop/SKILL.md` → `lib/revision-loop.md`. `skills/legal-memo-docx-render/` → `lib/docx-render/` (SKILL.md → README.md as maintainer doc; `scripts/md_to_docx.py` keeps its location relative to the module root, now at `lib/docx-render/scripts/md_to_docx.py`).
+- **Frontmatter stripped** from `lib/prose-style.md`, `lib/revision-loop.md`, `lib/docx-render/README.md` — they are no longer skills, so the `name:` / `description:` fields would be misleading.
+- **Path references updated in 18 files.** `skills/memo/SKILL.md`, `skills/continue/SKILL.md`, 7 agents (`memo-writer`, `revision-mediator`, `client-readiness-reviewer`, `style-reviewer`, `clarity-reviewer`, `logic-reviewer`, `counterargument-reviewer`), 3 templates (`classical-memo`, `executive-brief`, `research-summary-only`), 3 reference docs (`skills/memo/references/INDEX.md`, `operating-contract.md`, `pipeline-contract.md`), `README.md` (skills table split into "Skills" and "Internal library modules (`lib/`)"), `scripts/tests/test_md_to_docx_banner.py` (hardcoded `SCRIPT` path constant), and the Python script's own docstring comments.
+- **`__pycache__/`** removed from the moved scripts directory (was a build artifact, never should have been on disk).
+- **CHANGELOG entries for prior versions** left at their original `skills/legal-memo-prose-style/SKILL.md` etc. paths — historical accuracy. Only this 0.1.1 entry uses the new `lib/` paths.
+
+### Effect on users
+
+`/legal-memo-writer:` autocomplete now shows three commands (`memo`, `continue`, `status`) instead of six. Pipeline behaviour is unchanged — `/memo` still loads `lib/prose-style.md` at the same Phase 3 and Phase 8 reads, still calls `lib/docx-render/scripts/md_to_docx.py` at the Phase 11 export step, still references `lib/revision-loop.md` in Phase 9.
+
+If a user had built muscle memory for `/legal-memo-writer:legal-memo-prose-style` or `:revision-loop` to peek at internal methodology, they now open `lib/prose-style.md` or `lib/revision-loop.md` in the file viewer instead.
+
+### Verification
+
+- `python3 -m unittest discover -s scripts/tests` — **54/54 OK** (11.7s, no code-behaviour changes).
+- `python lib/docx-render/scripts/md_to_docx.py` smoke-run against synthetic markdown — exit 0, valid `.docx` produced.
+- Grep across the whole plugin for `skills/legal-memo-prose-style`, `skills/revision-loop`, `skills/legal-memo-docx-render` returns **0 matches in production code** (CHANGELOG retains historical references by design).
+- Manifest match: `.claude-plugin/plugin.json` version === README badge === git tag `v0.1.1` === dist zip filename.
+
 ## 0.1.0 — 2026-05-22
 
 **First public release.** Promotes the plugin from internal `0.0.x` iterations to a stable, documented `0.1.0` baseline suitable for external installation.

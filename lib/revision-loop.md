@@ -1,8 +1,3 @@
----
-name: revision-loop
-description: Methodology for the mode-aware revision loop in the legal-memo-writer pipeline (3 reviewers in Brief mode, 5 in Full). Use when main session is in revision_loop phase or about to enter it from drafting.
----
-
 # Revision loop methodology
 
 Reference playbook for the main session when running the revision loop. The main session reads this skill before the revision-loop phase of the `memo` skill workflow. Worker subagents do **not** read this skill — they have their own focused system prompts.

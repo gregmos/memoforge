@@ -4,7 +4,7 @@ md_to_docx.py - convert a legal memo markdown draft to a docx.
 
 Used by legal-memo-writer plugin at the export phase. Invoked from the main
 session via Bash. Reads markdown and applies the visual spec from
-skills/legal-memo-docx-render/SKILL.md (Arial 12pt body, 11pt italic blockquote,
+lib/docx-render/README.md (Arial 12pt body, 11pt italic blockquote,
 1-inch margins, single line spacing + 6pt after, justified, bold-paragraph
 headings without Word Heading styles, blockquote left-indent).
 
@@ -35,7 +35,7 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
-# Visual spec (from skills/legal-memo-docx-render/SKILL.md, ported from the user's
+# Visual spec (from lib/docx-render/README.md, ported from the user's
 # Cowork org-level skill `legal-memo-style 11.skill`).
 # ---------------------------------------------------------------------------
 

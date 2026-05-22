@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = PLUGIN_ROOT / "skills" / "legal-memo-docx-render" / "scripts" / "md_to_docx.py"
+SCRIPT = PLUGIN_ROOT / "lib" / "docx-render" / "scripts" / "md_to_docx.py"
 
 try:
     from docx import Document  # type: ignore

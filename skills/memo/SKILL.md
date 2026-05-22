@@ -14,7 +14,7 @@ You are the **main session orchestrator** for the legal-memo-writer plugin. You 
 
 **Authority hierarchy** (highest wins):
 1. Cowork / Anthropic platform policy.
-2. House style (`skills/legal-memo-prose-style/SKILL.md`).
+2. House style (`lib/prose-style.md`).
 3. This skill and its references in `skills/memo/references/`.
 4. Persistent task state (`state.json`).
 5. User's current task message and AskUserQuestion answers.
@@ -104,7 +104,7 @@ The Phase 1.5 mode pick happens later (after Phase 2 intake completes); the visu
 
 ### Task setup (step 1)
 
-Take the user query from `$ARGUMENTS`. Read `skills/legal-memo-prose-style/SKILL.md` for house style (auto-invocation should have already loaded it; if not, read explicitly).
+Take the user query from `$ARGUMENTS`. Read `lib/prose-style.md` for house style (auto-invocation should have already loaded it; if not, read explicitly).
 
 **Resolve the working directory directly inside the user's output folder.** All artifacts (state.json, plan.md, intake/, research/, drafts/, reviews/, the final docx) live in ONE place from Phase 1 onwards. There is no separate "staging" location; no copy step at the end. Links in chat point to the same directory throughout the run.
 
@@ -490,7 +490,7 @@ Read:
 - Original user query from `state.json`.
 - `intake/fact-assumption-report.md`.
 - `intake/user-facts.md` if it exists.
-- `skills/legal-memo-prose-style/SKILL.md`.
+- `lib/prose-style.md`.
 
 Classify:
 - **Type**: `regulatory_analysis` / `transactional` / `litigation_risk` / `cross_border` / `compliance_check` / `mixed`
@@ -908,7 +908,7 @@ Dispatch `memo-writer` via Agent tool. Pass:
 - Selected `template_id`.
 - Path to `state.json` — **mandatory**, the writer reads `state.json.mode`, `state.json.config.template_id`, `state.json.config.max_iterations`, `state.json.intake.assumptions_accepted`, and `state.json.language` for mode-aware composition and assumption-disclosure obligations (per `agents/memo-writer.md` §Inputs (v1) and §Rules State-aware inputs).
 - Paths to `plan.md`, intake files, research files, `research/research-sufficiency.json`, `research/currency-report.md` (human-readable view), `research/currency-report.json` (canonical machine-readable view, if present — memo-writer prefers it for status enum lookups; the `blocking[]` array is canonical for "do_not_use" source IDs the writer MUST avoid citing), and `research/source-pack.md`.
-- Paths to house-style skill (`skills/legal-memo-prose-style/SKILL.md`) and docx-render skill (`skills/legal-memo-docx-render/SKILL.md`).
+- Paths to house-style skill (`lib/prose-style.md`) and docx-render skill (`lib/docx-render/README.md`).
 
 It writes `drafts/v1.md` and creates `changelog.md`. Set `state.json.current_draft_path = drafts/v1.md`, `current_phase = revision_loop`, `current_iteration = 1`.
 
@@ -926,7 +926,7 @@ Print a progress update with draft path, selected template, and that revision it
 
 Do NOT include specific wall-time estimates in this message — real durations vary widely and stale numbers mislead the user.
 
-Load the methodology skill `skills/revision-loop/SKILL.md` (auto-invokable; if not auto-loaded, read explicitly).
+Load the methodology skill `lib/revision-loop.md` (auto-invokable; if not auto-loaded, read explicitly).
 
 **Ownership note:** `state.json.current_iteration` is initialized by the main session when `drafts/v1.md` exists. After a revision iteration starts, the **mediator** advances this field or moves the task to `export`. Main session and continue skill must not increment it after reviewer dispatch.
 
@@ -1053,7 +1053,7 @@ Dispatch `client-readiness-reviewer` via Agent tool. Pass:
 - `research/research-sufficiency.json`
 - `research/currency-report.md` (human-readable view)
 - `research/currency-report.json` (canonical machine-readable view, if present)
-- `skills/legal-memo-prose-style/SKILL.md`
+- `lib/prose-style.md`
 
 It writes `reviews/final-client-readiness.json`.
 
@@ -1089,7 +1089,7 @@ Run via Bash. The docx is written directly to `<work_dir>/memo-<slug>.docx` — 
 
 ```bash
 WORK_DIR="<state.json.work_dir>"
-python3 "${CLAUDE_PLUGIN_ROOT}/skills/legal-memo-docx-render/scripts/md_to_docx.py" \
+python3 "${CLAUDE_PLUGIN_ROOT}/lib/docx-render/scripts/md_to_docx.py" \
   --input "$WORK_DIR/drafts/v<N>.md" \
   --output "$WORK_DIR/memo-<slug>.docx" \
   --template-id <selected_template_id> \

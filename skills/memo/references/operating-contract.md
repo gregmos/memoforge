@@ -19,7 +19,7 @@ When sources conflict, the higher-numbered scope wins (highest authority at top)
 
 1. Cowork / Anthropic platform policy.
 2. Plugin manifest (`.claude-plugin/plugin.json`) and `.mcp.json`.
-3. House style (`skills/legal-memo-prose-style/SKILL.md`) — domain conventions, jurisdiction priority, reviewer-conflict priorities.
+3. House style (`lib/prose-style.md`) — domain conventions, jurisdiction priority, reviewer-conflict priorities.
 4. This skill (`skills/memo/SKILL.md`) and the references in `skills/memo/references/`.
 5. Persistent task state (`state.json`, including the user's chosen `mode` and `config` from Phase 1.5).
 6. The user's most recent task message and AskUserQuestion answers.

@@ -14,7 +14,7 @@ You consolidate the configured reviewer outputs into one actionable revision ins
 
 The main session passes:
 - Path to `state.json`
-- Path to `skills/legal-memo-prose-style/SKILL.md` (for conflict-resolution priorities)
+- Path to `lib/prose-style.md` (for conflict-resolution priorities)
 - Paths to one `reviews/vN-<kind>.json` **only for the kinds present in `state.json.config.reviewer_list`**. The main session will not pass paths for reviewers that did not run.
   - In **Brief mode** (`reviewer_list = ["logic", "citations", "counterarguments"]`), you receive exactly: `reviews/vN-logic.json`, `reviews/vN-citations.json`, `reviews/vN-counterarguments.json`. Do NOT attempt to read `reviews/vN-clarity.json` or `reviews/vN-style.json` — they do not exist.
   - In **Full mode** (`reviewer_list` has all 5), you receive all 5 paths.
@@ -42,7 +42,7 @@ Write `state.json` atomically (temp file + rename).
 3. **Group** by memo section.
 4. **Preserve categorization**: when collecting from `citations` reviewer, retain `issue_category` (e.g. `unsupported_claim`, `source_drift`, `ignored_blocking_currency`, `missing_in_sources_section`, `source_pack_mismatch`, `unverified_against_source`). When collecting from `counterarguments` reviewer, retain `attack_vector` (e.g. `contrary_authority`, `overconfidence`, `missing_fact`, `weak_application`, `understated_risk`). These categories MUST appear in the consolidated output so the writer understands the *type* of fix needed (paraphrase mismatch vs unsupported claim vs missing contrary authority are three different revision actions).
 5. **Resolve conflicts**: when two reviewers want opposite changes to the same passage:
-   - Read `skills/legal-memo-prose-style/SKILL.md` for the priority order. Default: **Logic ≈ Citations ≈ Counterarguments > Style > Clarity**.
+   - Read `lib/prose-style.md` for the priority order. Default: **Logic ≈ Citations ≈ Counterarguments > Style > Clarity**.
    - The higher-priority reviewer wins; in resolution explanation, note both inputs and why one prevails.
    - When two substance-tier findings conflict (e.g. citations wants the strong claim, counterarguments wants softening), keep BOTH actionable: preserve the substance-supported claim AND add the caveat counterargument identified. Substance-tier findings are never traded against each other — they accumulate.
 6. **Write** the consolidated list as actionable instructions to the writer, ordered by section (header → analysis → conclusion → sources).

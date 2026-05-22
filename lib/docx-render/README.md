@@ -1,8 +1,3 @@
----
-name: legal-memo-docx-render
-description: Render a finalized legal-memo markdown draft into a formatted .docx (Arial 12pt, 1" margins, blockquote indent, optional yellow warning banner). Invoked by the legal-memo-writer pipeline at Phase 11 export via Bash and md_to_docx.py. Use only at export time — not for prose tone, structure, or writing rules (see legal-memo-prose-style for those).
----
-
 # legal-memo-docx-render
 
 Methodology and instructions for converting a finalized legal memo markdown to docx. The actual conversion is executed by `scripts/md_to_docx.py` — this SKILL.md tells the model how and when to invoke it, what arguments to pass, and how to interpret failures.
@@ -23,7 +18,7 @@ The docx is written **directly into the working directory** (`state.json.work_di
 # ${CLAUDE_PLUGIN_DATA}/work/ staging since v0.0.29. The Python lookup below reads work_dir
 # from state.json defensively (state.json itself lives in the working directory).
 WORK_DIR=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["work_dir"])' "$WORK_DIR/state.json" 2>/dev/null || echo "$WORK_DIR")
-python3 "${CLAUDE_PLUGIN_ROOT}/skills/legal-memo-docx-render/scripts/md_to_docx.py" \
+python3 "${CLAUDE_PLUGIN_ROOT}/lib/docx-render/scripts/md_to_docx.py" \
   --input "$WORK_DIR/drafts/v<N>.md" \
   --output "$WORK_DIR/memo-<slug>.docx" \
   --template-id <selected_template_id> \
@@ -139,7 +134,7 @@ The current visual spec implements `legal-memo-style 11.skill` literally for lay
 
 ## What is now addressed (as of 0.0.34)
 
-Writing-style alignment with the source `legal-memo-style 11.skill` was previously listed as out-of-scope here. As of 0.0.34, the writing surface (rhetorical structure, four-beat Risk subsection pattern, definitions format, tone discipline) is implemented across `skills/legal-memo-prose-style/SKILL.md`, `agents/memo-writer.md`, all five `templates/*.md`, and `agents/style-reviewer.md`. The docx renderer in `scripts/md_to_docx.py` already handled the layout side; the rhetorical side now matches. If the source `.skill` archive evolves further, sync both layers.
+Writing-style alignment with the source `legal-memo-style 11.skill` was previously listed as out-of-scope here. As of 0.0.34, the writing surface (rhetorical structure, four-beat Risk subsection pattern, definitions format, tone discipline) is implemented across `lib/prose-style.md`, `agents/memo-writer.md`, all five `templates/*.md`, and `agents/style-reviewer.md`. The docx renderer in `scripts/md_to_docx.py` already handled the layout side; the rhetorical side now matches. If the source `.skill` archive evolves further, sync both layers.
 
 ## Reference
 

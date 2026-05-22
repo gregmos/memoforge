@@ -479,7 +479,7 @@ If verdict is `manual_review_required`, preserve the blockers in `state.json.cli
 
 Run the full docx export procedure documented in `memo/SKILL.md` Phase 11 — including the always-deliver.md fallback chain. Resume here MUST mirror the same three steps:
 
-1. **Primary path** — `python3 ${CLAUDE_PLUGIN_ROOT}/skills/legal-memo-docx-render/scripts/md_to_docx.py --input "<work_dir>/drafts/v<N>.md" --output "<work_dir>/memo-<slug>.docx" --template-id <selected_template_id> --final-status <final_status> --state "<work_dir>/state.json" --language en` via Bash. The docx is written directly into `state.json.work_dir` (no staging, no copy).
+1. **Primary path** — `python3 ${CLAUDE_PLUGIN_ROOT}/lib/docx-render/scripts/md_to_docx.py --input "<work_dir>/drafts/v<N>.md" --output "<work_dir>/memo-<slug>.docx" --template-id <selected_template_id> --final-status <final_status> --state "<work_dir>/state.json" --language en` via Bash. The docx is written directly into `state.json.work_dir` (no staging, no copy).
 
 2. **Pandoc fallback** (if step 1 fails) — `pandoc "<work_dir>/drafts/v<N>.md" -o "<work_dir>/memo-<slug>.docx"`. Pandoc is not guaranteed; expect failure if missing.
 

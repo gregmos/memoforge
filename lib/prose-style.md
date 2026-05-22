@@ -1,13 +1,8 @@
----
-name: legal-memo-prose-style
-description: Prose-writing playbook for the legal-memo-writer pipeline — tone (formal, dispassionate), four-beat Risk subsection pattern (description → quote → analysis → verdict), definitions format, anti-AI-tells, reviewer-conflict priorities. Use when writing legal memo, legal opinion, contract review, regulatory analysis, compliance check. Does not handle docx layout (see legal-memo-docx-render for that).
----
-
 # House style for legal-memo-writer
 
 Plain-English playbook for consistent style across the legal-memo-writer pipeline. Read by the main session, memo-writer and revision-mediator. Reviewers (logic, clarity, style, citations) do NOT read this skill directly — relevant principles are baked into their system prompts to preserve isolation.
 
-The visual side of the docx output is governed by `skills/legal-memo-docx-render/SKILL.md` and `skills/legal-memo-docx-render/scripts/md_to_docx.py`. The rhetorical side (this skill) tells the writer *how the prose reads*. Both come from the same canonical source: the Cowork org-level `legal-memo-style 11.skill` archive. If that source changes, sync both.
+The visual side of the docx output is governed by `lib/docx-render/README.md` and `lib/docx-render/scripts/md_to_docx.py`. The rhetorical side (this skill) tells the writer *how the prose reads*. Both come from the same canonical source: the Cowork org-level `legal-memo-style 11.skill` archive. If that source changes, sync both.
 
 ## About the user
 
@@ -197,4 +192,4 @@ Reviewer set and iteration cap are **mode-dependent**, not fixed. The canonical 
 - Lists: bullet for parallel enumerations; numbered for sequential or prioritized items
 - Source citations grouped at the end in a numbered list with full bibliographic info
 - For forced-exit or manual-review memos, the yellow warning box is rendered as a callout block in docx (background color `#FFF3CD`, border `#FFE69C`)
-- For docx layout details (font, sizes, indents, spacing), see `skills/legal-memo-docx-render/SKILL.md` and `skills/legal-memo-docx-render/scripts/md_to_docx.py`
+- For docx layout details (font, sizes, indents, spacing), see `lib/docx-render/README.md` and `lib/docx-render/scripts/md_to_docx.py`

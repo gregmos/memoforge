@@ -49,7 +49,7 @@ No hard cap. Typical length 1500-3500 words depending on the number of issues an
 - DO NOT include a "Risk" subsection in any issue — that field belongs to validated memos, not summaries.
 - DO NOT include a "Recommendation" section above the "Next steps the user can take" list — the absence is intentional.
 - The banner block above the Context section is injected by Phase 11 export — the writer MUST NOT type it manually. Leave a placeholder `<!-- BANNER: injected at export --> ` line if you need to mark its position.
-- See `skills/legal-memo-prose-style/SKILL.md` for citation format, definition format, anti-patterns. Tone overrides above take precedence over house-style "deliverability" guidance because this document is *not* a deliverable opinion.
+- See `lib/prose-style.md` for citation format, definition format, anti-patterns. Tone overrides above take precedence over house-style "deliverability" guidance because this document is *not* a deliverable opinion.
 
 ## What goes in the warning banner
 
