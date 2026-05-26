@@ -3,7 +3,7 @@
 > Multi-agent legal memo drafting plugin for **Claude Cowork** (primary) and **Claude Code** (best-effort).
 > Takes a free-form legal question, runs the full lawyer workflow — intake, research, drafting, review, polish — and ships a finished `.docx` memo.
 
-**Version:** `0.4.0` · **Author:** Grigorii Moskalev · **License:** MIT
+**Version:** `0.6.3` · **Author:** Grigorii Moskalev · **License:** MIT
 
 ---
 
@@ -31,7 +31,51 @@ You get a memo that cites real statutes and judgments, names contrary authority,
 
 ### 1. Install
 
-**Cowork:** Settings → Plugins → drag-and-drop `legal-memo-writer-0.4.0.zip` from the [Releases page](../../releases), or install via marketplace.
+**Cowork:** Settings → Plugins → drag-and-drop `legal-memo-writer-0.6.3.zip` from the [Releases page](../../releases), or install via marketplace.
+
+**Live-progress dashboard permission setup (one-time, only if needed).** v0.5.4 ships a `PreToolUse` hook that auto-approves the three Cowork artifact tools (`mcp__cowork__create_artifact`, `mcp__cowork__update_artifact`, `mcp__cowork__list_artifacts`) used by the live-progress sidebar dashboard. If that hook is honored by your Cowork build, the plugin runs without surfacing permission prompts during research, drafting, or review. If you still see repeated `Update artifact` prompts after installing 0.5.4, add the following to your user-level `~/.claude/settings.json` as a manual fallback (this is what the hook is doing under the covers; some Cowork builds may not honor plugin-bundled PreToolUse hooks):
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "mcp__cowork__create_artifact",
+      "mcp__cowork__update_artifact",
+      "mcp__cowork__list_artifacts"
+    ]
+  }
+}
+```
+
+If the file already exists, merge the `permissions.allow` array. Cowork honors this permissions list out of the box per the documented MCP rule syntax — `mcp__server__tool` matches that exact tool, and `mcp__server__*` matches all tools from a server.
+
+**Visualize widget permission setup (one-time, only if needed).** v0.6.3 extends the `PreToolUse` hook to also pre-approve the two visualize widget tools (`show_widget`, `read_me`) used by Phase 1.5 mode mockup, Phase 2a + 6.6 elicitation widgets, Phase 3 plan diagram, Phase 12 final dashboard, and the 5 inline milestone trackers. The hook matcher requires `visualize` substring inside the MCP namespace token, so it covers both plugin-scoped and Cowork UUID-scoped variants without affecting non-visualize MCPs. If the hook is not honored by your Cowork build and you see repeated `show_widget` prompts during a memo run, add these to your user-level `~/.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_visualize__show_widget",
+      "mcp__plugin_visualize__read_me"
+    ]
+  }
+}
+```
+
+If Cowork exposes visualize under a UUID namespace (e.g. `mcp__abc123-visualize-uuid__show_widget`) you can either use the exact UUID-prefixed tool names from your session OR a wildcard `mcp__*visualize*__show_widget` if your Cowork build honors glob patterns.
+
+**Bundled MCP server permission setup (one-time, only if needed).** The plugin's two bundled MCP servers (Legal Data Hunter and CourtListener, registered via `.mcp.json`) are NOT pre-approved by a hook — their function names (`get_document`, `search`, `call_endpoint`) overlap with potential other MCPs you may have installed, and Cowork surfaces them under arbitrary UUID namespaces, so a programmatic hook regex risks unintended auto-approval. Per-call permission prompts during research (Phase 5) are usually one-time-per-session for `Always allow` to stick within a single subagent, but #24433 means the grant doesn't persist across subagent dispatch boundaries — so you may see prompts repeat across the 3 parallel researchers + currency-checker + sufficiency-reviewer dispatches. If you want to suppress them programmatically, add the following to your user-level `~/.claude/settings.json` (Cowork's `mcp__server__*` glob syntax works for plugin-scoped variants; for UUID variants, copy the exact tool names from your first permission prompt):
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_legal-memo-writer_legal-data-hunter__*",
+      "mcp__plugin_legal-memo-writer_courtlistener__*"
+    ]
+  }
+}
+```
 
 **Claude Code (local dev):**
 ```bash

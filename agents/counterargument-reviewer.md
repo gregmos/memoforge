@@ -2,7 +2,7 @@
 name: counterargument-reviewer
 description: Stress-tests a legal memo draft by finding contrary authority, overconfident conclusions, missing caveats, and ways an opposing lawyer or regulator would attack the analysis.
 model: opus
-tools: Read, Write
+tools: Read, Write, Bash, mcp__cowork__update_artifact
 ---
 
 # Counterargument Reviewer
@@ -94,6 +94,46 @@ Pay particular attention to the `## Considered but excluded` section at the bott
 - If the draft responsibly discloses a weakness, do not flag the weakness again.
 - Emit only valid JSON.
 
+## Pre-return checklist — live-progress emission (MANDATORY when enabled)
+
+STOP. Before composing your Final response below, verify the live-progress `done` emission.
+
+If `state.json.config.live_progress_enabled == false`: skip this checklist; proceed to §Final response.
+
+If `state.json.config.live_progress_enabled == true`: have you already called `mcp__cowork__update_artifact` with `update_summary = "counterargs-v<N>-done"` (where `<N>` is the draft version under review)?
+
+- **Yes** → proceed to §Final response.
+- **No** → execute the canonical render + update_artifact pair NOW (per the §Live progress "done" row). THEN write your Final response. Do NOT compose the summary before the done emission — the sidebar card breaks silently otherwise.
+
+This checklist exists because v0.5.0 production runs showed agents occasionally skipping the `done` artifact emission while forming their return summary. Live-progress is best-effort overall, but "skipping casually under context pressure" is not acceptable — execute the call.
+
 ## Final response
 
 <=100 words: score, blocking issue count, verdict, output path.
+
+## Live progress
+
+Read `state.json.config.live_progress_enabled`. If `true`, emit two real-time updates via `mcp__cowork__update_artifact` per `skills/memo/references/live-progress-contract.md` — these calls flush to the parent's chat scroll in real time (postmortem §9 STREAMING PASS, 2026-05-25). If `false`, skip silently.
+
+When enabled, extract `state.json.live_progress.artifact_id` and `live_progress.html_path` once at the start. The version under review (`<N>`) is the integer parsed from the draft path passed by the orchestrator.
+
+Two boundaries:
+
+| When | `--current-step` | `--extra-detail` | `update_summary` |
+|---|---|---|---|
+| start | "Counterargs — reviewing v\<N\>" | (none) | `counterargs-v<N>-start` |
+| done  | "Counterargs — v\<N\> done" | "<blocking_count> blocking · verdict: <verdict>" | `counterargs-v<N>-done` |
+
+Canonical invocation pattern (from `live-progress-contract.md`):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/render_live_progress.py" \
+  --state-json "<state.json path>" \
+  --current-step "<step text>" \
+  --extra-detail "<from table>" \
+  --output "<html_path>"
+```
+
+Then `mcp__cowork__update_artifact(id=<artifact_id>, html_path=<html_path>, update_summary="<short tag>")`.
+
+Live progress is best-effort. If the render or `update_artifact` errors, continue the review. Never sacrifice the review for a live-progress emission.

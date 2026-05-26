@@ -32,7 +32,16 @@ Single source of truth for `state.json` shape. All skills and agents that read o
     "style_profile": null | "<profile name>",         // human-readable name (matches the directory under profiles/)
     "style_profile_path": null | "<absolute POSIX path>", // path to the profile directory
     "prose_style_path": null | "<absolute POSIX path>",   // path to <profile>/prose-style.md
-    "template_path": null | "<absolute POSIX path>"        // path to <profile>/template.md, or null if the profile has no template (rules-only without structural rules → fallback to built-in template)
+    "template_path": null | "<absolute POSIX path>",       // path to <profile>/template.md, or null if the profile has no template (rules-only without structural rules → fallback to built-in template)
+
+    // Live-progress fields (all optional, all default false/null). Populated at Phase 1 step 3.5
+    // by the live-progress precheck. The orchestrator probes whether `mcp__cowork__create_artifact`
+    // and `mcp__cowork__update_artifact` are available; if both are, mints the master artifact and
+    // sets live_progress_enabled = true. When enabled, heavy subagents (memo-writer, researchers,
+    // reviewers, mediator, client-readiness-reviewer) emit `update_artifact` calls at their
+    // internal step boundaries. v0.2.0's orchestrator-side updates were end-of-turn buffered;
+    // v0.5.0 moves the calls into subagents (postmortem §9 resolved STREAMING PASS on 2026-05-25).
+    "live_progress_enabled": false | true             // owner: memo Phase 1 step 3.5 (precheck)
   },
   // "heartbeat_choice" — DEPRECATED in v0.0.43. The Phase 7.5 heartbeat gate (full vs research-summary) was replaced by the source-review checkpoint, which is a text-parsed continue/cancel gate (no full/summary branch). NEW tasks do not write this field. Legacy tasks created on v0.0.42 or earlier may still have it set; `skills/continue/SKILL.md` drops it on resume and logs `legacy_field_dropped`.
   "revision_gate_choice": null | "continue",  // v0.0.44: auto-advanced by Phase 9 step 6b (no user gate). Legacy v0.0.43 value `accepted_early` no longer written but accepted on read.
@@ -70,9 +79,10 @@ Single source of truth for `state.json` shape. All skills and agents that read o
   },
 
   "current_phase":                                  // owner: memo (sets), mediator (advances during loop), memo Phase 11 (sets done)
-    "intake_preliminary_research" | "intake_questions_pending" | "mode_pick_pending" | "planning" | "plan_approval_pending" | "research" | "research_sufficiency" | "currency_check" | "source_pack" | "source_review_pending" | "drafting" | "revision_loop" | "client_readiness" | "export" | "done" | "failed" | "cancelled_by_user",
+    "intake_preliminary_research" | "intake_questions_pending" | "mode_pick_pending" | "planning" | "plan_approval_pending" | "research" | "research_sufficiency" | "research_sufficiency_followup_pending" | "currency_check" | "source_pack" | "source_review_pending" | "drafting" | "revision_loop" | "client_readiness" | "export" | "done" | "failed" | "cancelled_by_user",
   // `source_review_pending` replaces the v0.0.42 `heartbeat_pending` (which is deprecated-legacy — see /continue migration). The phase ends the assistant turn explicitly so Cowork flushes chat after the parallel research block.
   // `mode_pick_pending` is the hard gate for Phase 1.5 mode choice. It sits between `intake_questions_pending` and `planning`. /continue must NOT advance from this phase to `planning` until `state.json.mode` is set via the Phase 1.5 AskUserQuestion.
+  // `research_sufficiency_followup_pending` (v0.6.3+) is a conditional gate that fires only when research-sufficiency-reviewer returns `targeted_followup_needed` AND at least one `blocking_gap.target_agent == "main-session"`. It ends the assistant turn explicitly so the user can answer follow-up questions via the visualize elicitation widget (or text fallback). At most ONE Phase 6.6 gate per task — bounded by `attempts.research_followup` (which is set to 1 atomically when the gate fires). See `skills/memo/SKILL.md` Phase 6 Branch B6a for the gate procedure, and `skills/continue/SKILL.md` §`research_sufficiency_followup_pending` for the resume procedure.
 
   "dispatched_researchers": null | [                // owner: memo Phase 5; subset of config.researcher_set actually invoked (doctrinal omitted when plan.doctrine_required is false). Set BEFORE Agent dispatch, so audit (`phase5_dispatch` event) can compare candidate vs dispatched.
     "statutory" | "case-law" | "doctrinal"
@@ -119,15 +129,63 @@ Single source of truth for `state.json` shape. All skills and agents that read o
   "final_docx_path": null | "<absolute path>", // owner: memo Phase 11. ABSOLUTE path equal to `<state.json.work_dir>/memo-<slug>.docx` after a successful export, or `<state.json.work_dir>/memo-<slug>.md` if Phase 11 fell back to delivering markdown (per `always-deliver.md`). Validator (`scripts/validate_state.py`) requires `pathlib.Path(final_docx_path).is_file()` once `current_phase == done`. The legacy `final_artifacts_dir` field is removed — the audit trail folder IS `work_dir`.
 
   "attempts": {                                     // owner: memo/continue (retry-budget persistence)
-    "research_followup": 0,
+    "research_followup": 0,                         // v0.6.3+: now counts BOTH researcher-side AND user-side (Phase 6.6) follow-ups, max 1 across both. Incremented atomically by memo Phase 6 Branch B6a (user-followup gate fires) OR Branch B6b (legacy researcher re-dispatch, no Subset U gaps). Once consumed, both follow-up paths are closed for the task.
     "research_followup_pending_review": false,
     "client_readiness_polish": 0,
     "client_readiness_polish_pending_review": false,
     "sufficiency_regate": 0,                        // owner: memo Phase 6.5; incremented (max 1) when currency-checker invalidates sources and memo re-dispatches research-sufficiency-reviewer. Validator rejects > 1.
     "reviewer_json_retry": {"v<N>-logic": 1}
   },
+
+  "sufficiency_followup": null | {                  // owner: memo Phase 6 Branch B6a (writes when Phase 6.6 user-followup gate fires; v0.6.3+); continue/SKILL.md §`research_sufficiency_followup_pending` writes `user_response` + `answered_at` + `status` on resume. Null when no Phase 6.6 gate has fired (the common case — most tasks have no main-session blocking_gaps).
+    "status": "questions_pending" | "answered" | "skipped_defaults",
+    "questions": [                                  // copies of `blocking_gaps[].followup_question` entries from research-sufficiency.json that had `target_agent == "main-session"`, augmented with sequential `question_number` (1-indexed) for the widget letter-mapping
+      {
+        "question_number": <int>,                   // 1-indexed; matches the widget's `<n>` token in user replies like `1A 2C`
+        "question": "<full text ending with ?>",
+        "header": "<≤12 chars>",
+        "options": [{"label": "...", "description": "...", "letter": "A"}, ...], // augmented with `letter` at widget-build time
+        "default_assumption_if_skipped": "<plain text>",
+        "rationale_md": "<one-line legal rationale>"
+      }
+    ],
+    "subset_r": [                                   // copies of `blocking_gaps[]` entries with `target_agent != "main-session"`; queued for re-dispatch to researchers AFTER user replies. Each item retains `gap` + `target_agent` + the matching `issue_coverage[].recommended_followup_prompt` so the resume step can dispatch deterministically.
+      {
+        "gap": "<gap text>",
+        "target_agent": "statutory-researcher" | "case-law-researcher" | "doctrinal-researcher",
+        "recommended_followup_prompt": "<from issue_coverage>"
+      }
+    ],
+    "user_response": null | {                       // parsed Q→A map after user replies; null while status == "questions_pending"
+      "<question_number>": {"option_label": "<chosen>", "free_text": null | "<custom text>", "default_applied": true | false}
+    } | {"_proceed": true},                         // the `_proceed` marker is set when user typed `proceed` to accept all defaults
+    "asked_at": "<ISO>",
+    "answered_at": null | "<ISO>"
+  },
+
   "remaining_blocking_issues": [],                  // owner: mediator/client-readiness; used by docx warning banner
-  "events_path": "events.jsonl"
+  "events_path": "events.jsonl",
+
+  "live_progress": null | {                          // owner: memo Step 1 sub-step 1d mints (v0.5.6+); orchestrator updates timeline at phase transitions; subagents READ-ONLY for artifact_id/html_path; orchestrator + select subagents write the active_subagent + source_counts fields per v0.6.0
+    "artifact_id": "memo-<task_id>-live",            // kebab-case Cowork artifact id; passed to every mcp__cowork__update_artifact call
+    "html_path": "<absolute path to live-progress.html under work_dir>", // file overwritten atomically on every update; passed as html_path to update_artifact
+    "started_at_iso": "<ISO 8601 of pipeline start>", // set once at mint; used by render_live_progress.py to compute total elapsed
+    "phase_started_at_iso": "<ISO 8601 of current phase start>", // updated by orchestrator at every phase transition; render uses for "X elapsed in this phase" line
+    "timeline": [                                     // append-only list of phase entries; orchestrator appends a new entry on each `current_phase` change
+      {
+        "phase": "intake_preliminary_research" | "...",  // matches state.current_phase enum
+        "started_at_iso": "<ISO>",
+        "completed_at_iso": null | "<ISO>"            // null while phase is active; set when orchestrator transitions to next phase
+      }
+    ],
+    "active_subagents": null | ["<subagent-name>", ...], // v0.6.2+. Owner: memo orchestrator. Set to a LIST of subagent names immediately BEFORE Task(subagent_type=...) dispatch(es) via atomic-Edit, AND set to null (or empty list — both treated as "none") AFTER the dispatch(es) return. The renderer renders ONE chip per list element, so a parallel-3-researcher dispatch shows three 🛠 chips ("statutory", "case-law", "doctrinal") side-by-side. For single-subagent dispatch (memo-writer, mediator, client-readiness, etc.) the list has one element. NOT set by subagents themselves. Backwards-compat: renderer accepts a bare string and treats it as a single-element list. (Was `active_subagent: null | string` in v0.6.0–v0.6.1 — collapsed parallel dispatches to "3 researchers (parallel)"; the list form gives per-subagent visibility.)
+    "source_counts": null | {                          // v0.6.0+. Owner: source-pack-builder agent (Phase 7). Populated once at the end of source-pack assembly. Renderer surfaces as a "📊 sources" chip showing all three counts. Counts are extracted from the research files (research/statutes.md, research/case-law.md, research/doctrine.md) the source-pack-builder already reads.
+      "statutes": <int>,
+      "cases": <int>,
+      "doctrine": <int>
+    },
+    "topic": null | "<short 3-7 word theme>"           // v0.6.2+. Owner: memo orchestrator. Generated at Step 1d (mint) from `user_query`. Examples: "GDPR compliance for AI support feature", "DPA-vs-clickwrap dispute analysis", "Schrems II transfer assessment". Renderer prefers `topic` over the truncated `user_query` for the dashboard header — clean theme line vs raw query truncation. When null, renderer falls back to truncating `user_query`.
+  }
 }
 ```
 

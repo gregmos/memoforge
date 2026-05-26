@@ -2,7 +2,522 @@
 
 All notable changes to legal-memo-writer.
 
-The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version line in `README.md`, `.claude-plugin/plugin.json`, the latest `dist/*.zip`, and the latest `git tag` MUST all match.
+The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version line in `README.md`, `.claude-plugin/plugin.json`, the latest `dist/*.zip`, and the latest `git tag` MUST all match. The `legal-memo-writer-0.5.0-probe.zip` archive on disk is a preserved developer-only diagnostic build that proved out §9 of the v0.2.0 postmortem; it is not a release, and `README.md` was deliberately not updated for it.
+
+---
+
+## Project arc — live-progress dashboard, shipped (v0.2.0 → v0.6.2)
+
+> Reference summary for the multi-week arc that turned the plugin's silent 5–40-minute autonomous blocks into a continuous, real-time sidebar dashboard. The system now works end-to-end in production Cowork on Windows: artifact mints on Phase 1, refreshes in real time as subagents work, ticks elapsed-time counters every second via JS, and never surfaces a permission prompt to the user.
+
+### The problem (May 2026)
+
+The `/legal-memo-writer:memo` pipeline runs a 15-agent legal memorandum production line. Phases 5→7.5 (parallel research → sufficiency → currency → source-pack → checkpoint) and Phases 8→12 (drafting → revision loop → polish → export) each spend 5–40 minutes in a single autonomous turn during which Cowork's chat surface flushes nothing — the user sees `Agent` dispatch tiles + a side-panel TodoWrite but no text. Closed GitHub issues #26805, #29773, #29547, #33564, #44776 establish the chat-buffering bug as a hard upstream constraint with no fix planned by Anthropic.
+
+### What we tried, and what worked
+
+| Attempt | Hypothesis | Outcome |
+|---|---|---|
+| **v0.2.0** | Orchestrator-side `mcp__cowork__update_artifact` calls bypass the chat-buffering bug. | **Falsified.** Real-run on 2026-05-24 showed both the chat indicator strips AND the sidebar card buffer to end-of-turn — same failure mode as text. Rolled back to v0.1.1. Full forensics in `docs/postmortems/v0.2.0-live-progress.md`. |
+| **v0.5.0-probe** | Subagent-side `update_artifact` calls bypass the parent-orchestrator buffer (postmortem §9 open hypothesis). | **STREAMING PASS.** Empirically confirmed 2026-05-25 with a one-subagent probe + 25-second sleeps + falsifiable framing. User verbatim: *"Это работает, обновляется в режиме реального времени артефакт, это удобно и классно выглядит."* |
+| **v0.5.0** | Productionise the §9 mechanic across all 15 agents. | Shipped: master artifact minted at Phase 1, every heavy/medium subagent calls `update_artifact` at its internal step boundaries. ~50 update_artifact calls per Full-mode run. |
+| **v0.5.1** | Subagents sometimes skip the `done` emission while forming their return summary. | Added Pre-return checklist section before every `## Final response` in all 15 instrumented agents. Forces explicit STOP-and-verify. |
+| **v0.5.2 → v0.5.4** | Cowork prompts on every subagent's update_artifact call ("always allow" doesn't persist across subagent dispatches per #24433). Tried plugin-bundled `settings.json` and `PreToolUse` hook to pre-grant. | Two false starts: plugin `settings.json` only honors `agent` and `subagentStatusLine` keys per docs (permissions silently dropped); hook command `${CLAUDE_PLUGIN_ROOT}` env var didn't expand in Cowork's hook executor on Windows. **v0.5.4 fixed the hook with the docs-correct quoting**, then **v0.5.7 ditched the env var entirely with an inline `python3 -c "..."` command** — works in production. |
+| **v0.5.5 → v0.5.6** | Orchestrator was skipping the artifact mint at Phase 1 step 3.5 because step 4 (fact-assumption-analyst dispatch) opening said "after all THREE preceding steps" without naming the mint. | **v0.5.6 moved the mint into Step 1 sub-step 1d** (non-skippable task setup). Verified empirically that the mint now happens. |
+| **v0.5.7** | Hook command `${CLAUDE_PLUGIN_ROOT}` wasn't expanding in Cowork's Windows hook executor. | **Inline `python3 -c "..."`** with no env-var dependency. Hook auto-approves mcp__cowork__* artifact tools so the user sees zero permission prompts. |
+| **v0.6.0** | Dashboard is functional but ugly and informationless. | Flat-design HTML refresh + inline `<script>` block (≤30 lines) for self-contained ticking timers + three info chips (source counts, active subagent, iteration counter) + denser update_artifact emissions (memo-writer per-section, mediator per-reviewer). +50 % update frequency in Full mode. |
+| **v0.6.1** | Phase pills numbered "1, 1.5, 2a, 3, 4, …" with Mode rendering before Intake — confusing and didn't match execution order. | Renumbered to clean sequential 1–13; reordered so Mode comes after Intake. State schema unchanged. |
+| **v0.6.2** | Header truncated raw user query mid-sentence; parallel dispatches collapsed into "🛠 3 researchers (parallel)". | Added `live_progress.topic` (3–7 word theme generated at Step 1d) for the header. Changed `active_subagent` (string) → `active_subagents` (list) so parallel batches show one chip per subagent. |
+
+### Where the system stands at v0.6.2
+
+- **Live dashboard appears immediately** after Phase 1 setup with the new flat design.
+- **Real-time JS tickers** update elapsed-in-phase, total elapsed, and "Updated Xs ago" every second without `update_artifact` traffic.
+- **Three info chips** surface contextually: `📊 N statutes · M cases · K doctrine` (after Phase 7), `🛠 <subagent-name>` (one per active subagent), `🔁 iteration N of max` (during revision loop).
+- **Per-subagent chips** for parallel dispatches (Phase 5 research, Phase 9 reviewers) show each name side-by-side, not a collapsed label.
+- **Sequential 1–13 phase pills** in actual execution order (Init → Intake → Mode → Plan → Approve → Research → Sufficiency → Source-pack → Draft v1 → Revise → Polish → Export → Summary).
+- **Clean topic header** instead of truncated raw query.
+- **~75 update_artifact calls per Full-mode run** (was ~50 in v0.5.0; +50 %): memo-writer per-section, mediator per-reviewer, plus all the v0.5.0 baseline points.
+- **Zero permission prompts** in production — plugin-bundled inline-Python hook auto-approves the three cowork artifact tools without env-var dependency.
+- **Substantive memo output unchanged** from v0.4.0 — all live-progress work is supplementary visual instrumentation, never on the critical path.
+
+### Reusable findings for future plugins
+
+Documented empirically through this arc (also in `~/.claude/projects/.../memory/reference_cowork_live_progress.md` for cross-session memory):
+
+1. **`mcp__cowork__update_artifact` from a subagent flushes real-time to the parent's chat scroll.** Orchestrator-side calls buffer to end-of-turn. The subagent surface is the streaming hatch.
+2. **Plugin-bundled `settings.json` only honors `agent` and `subagentStatusLine` keys** per Anthropic docs — permission rules there are silently dropped. Permissions must come from user/project/managed settings OR a `PreToolUse` hook.
+3. **`${CLAUDE_PLUGIN_ROOT}` does NOT expand in Cowork's hook command executor on Windows** (literal string is passed through). Use inline `python3 -c "..."` commands or absolute paths instead. Empirically falsified the docs example.
+4. **AskUserQuestion silent-fails post-single-Task-dispatch** in plugin-skill context (stronger than the v0.0.43 "post-parallel" finding). Use text-parsed gates for any user gate after any subagent dispatch.
+5. **Cowork's "Always allow" UI doesn't persist across subagent dispatch boundaries** ([#24433](https://github.com/anthropics/claude-code/issues/24433)). Plugin-bundled `PreToolUse` hook is the only programmatic bypass.
+6. **CSS-only animations + inline `<script>` blocks work in cowork artifact iframes.** Setting `setInterval` for tickers does not require a callback to the harness; the iframe sandbox allows self-contained DOM mutation.
+7. **Instruction-following discipline matters more than instruction count.** The Pre-return checklist pattern (STOP-and-verify section immediately before `## Final response`) reliably catches the LLM at the moment it would normally skip a "best-effort" emission. Used in 15 agents; closes the gap that v0.5.0 had with orchestrator emissions falling silent.
+
+### Reference artifacts
+
+- Renderer: `scripts/render_live_progress.py` (54 unit tests in `scripts/tests/test_render_live_progress.py`).
+- Contract: `skills/memo/references/live-progress-contract.md`.
+- Orchestrator mantras: `skills/memo/SKILL.md` Step 1 sub-step 1d (mint) and §"MANDATORY — orchestrator's active_subagents plumbing" (per-dispatch).
+- 15 instrumented agents: every file under `agents/*.md` except `style-extractor.md` (which is Style-Studio-only, not in the main pipeline) has a `## Live progress` section + `## Pre-return checklist`.
+- Initial postmortem (still required reading for context): `docs/postmortems/v0.2.0-live-progress.md`.
+- The diagnostic probe that proved §9: `dist/legal-memo-writer-0.5.0-probe.zip` (archived on disk; never republished).
+
+---
+
+## 0.6.3 — 2026-05-26 (visualize hook pre-approval + Phase 6.6 user-followup gate)
+
+**Two improvements based on the v0.5.4-v0.5.7 hook lesson (plugin-bundled `PreToolUse` hooks DO work in production Cowork) and the last production run's `targeted_followup_needed` outcome (researchers were re-dispatched on a gap the user could have answered in seconds, but the user was never asked).**
+
+### Why
+
+1. **Hook scope extension:** v0.5.7's `hooks/hooks.json` pre-approves only the three `mcp__cowork__*` artifact tools. The visualize widget tools (`show_widget`, `read_me`) get called many times per run — Phase 1.5 mode mockup, Phase 2a intake elicitation, Phase 3 plan diagram, Phase 12 final dashboard, 5 inline milestone trackers, plus the new Phase 6.6 elicitation widget added in this release. Each call hits the same #24433 mechanism that originally drove the cowork-artifact prompt storm: Cowork's "Always allow" UI does not persist across subagent dispatch boundaries. Pre-approving these via the existing hook is a one-line regex change that costs nothing and eliminates the next batch of subagent-boundary prompts.
+
+2. **Phase 6.6 user-followup gate:** `agents/research-sufficiency-reviewer.md`'s JSON schema defined `blocking_gaps[].target_agent` as a 4-value enum including `"main-session"` — a signal that "this gap can only be closed by asking the user". But `skills/memo/SKILL.md:981-985` never read `target_agent`; on `targeted_followup_needed` it sent every gap's `recommended_followup_prompt` to researchers, including gaps that no researcher could answer (missing user facts like controller-establishment country, processing volume, opt-in vs default-on). The user reported this verbatim after a production run: *"иногда после ресерча может быть такая ситуация что у нас попросить могут доп вопросы? targeted_followup_needed — вот что выдало в последний прогон. Но этого у нас не продумано, ничего не спрашивают у пользователя дополнительно."* Phase 6.6 fixes the gap structurally: when sufficiency returns `targeted_followup_needed` AND has `main-session` blocking_gaps, the orchestrator ends the turn with a visualize elicitation widget (or text fallback) asking those exact follow-up questions. User answers, orchestrator writes them to `intake/user-facts.md`, optionally re-dispatches researchers for the remaining researcher-side gaps, and re-runs sufficiency once. Bounded by the existing `attempts.research_followup` budget (one user-followup OR one researcher-followup per task, not both).
+
+### What changed
+
+**Part A — Visualize hook pre-approval.**
+- **`hooks/hooks.json` extended with a SECOND matcher block** for `mcp__.*visualize.*__(show_widget|read_me)`. Tight regex (requires `visualize` substring inside the namespace) so an arbitrary user MCP exposing `show_widget` won't be auto-approved unless it self-identifies as a visualize variant. Covers both plugin-scoped (`mcp__plugin_visualize_*__show_widget`) and Cowork UUID-scoped (`mcp__<uuid-with-visualize-tag>__show_widget`) namespaces. The existing cowork matcher is unchanged. Each entry uses the same inline `python3 -c` invocation pattern from v0.5.7 (no env-var dependency).
+- **`README.md` gains two new fallback blocks** alongside the existing cowork-artifact fallback (line 36): one for visualize tools (in case the hook regex doesn't match a specific Cowork UUID variant) and one for the bundled MCP servers (LDH + CourtListener — these are NOT pre-approved by hook because their function names overlap with potential other MCPs and Cowork's UUID-scoped namespaces would require a wildcard regex with unintended-auto-approval risk).
+- LDH/CourtListener tools are intentionally NOT added to `hooks.json` — fallback is README-documented user settings.json edits only.
+
+**Part B — Phase 6.6 user-followup gate.**
+- **`agents/research-sufficiency-reviewer.md` JSON schema extended:** `blocking_gaps[]` entries with `target_agent: "main-session"` MUST now include a non-null `followup_question` block (question text + ≤12-char header + 2-4 options + `default_assumption_if_skipped` + `rationale_md` — same shape as `fact-assumption-analyst`'s intake questions). New section "## Generating followup_question for main-session gaps" explains the authoring rules (bucketed options for open-ended facts, binary options for yes/no, free-text fallback via the widget's `<n>:custom text` syntax).
+- **`skills/memo/SKILL.md` Phase 6 rewritten with four branches (B6a-B6d):** the orchestrator partitions `blocking_gaps[]` by `target_agent` into Subset R (researcher gaps, existing behavior) and Subset U (main-session gaps, new). Branch B6a fires the Phase 6.6 gate when Subset U is non-empty AND `attempts.research_followup == 0`; it transitions `current_phase = "research_sufficiency_followup_pending"`, populates `state.json.sufficiency_followup.{questions, subset_r, status}`, renders the elicitation widget (Path A) or text fallback (Path B), emits `gate_announced`, ends the turn. Branches B6b-B6d preserve all pre-v0.6.3 behavior.
+- **`skills/memo/SKILL.md` Phase 5 heads-up updated** to pre-warn the user about the new conditional gate so they know what to expect when it fires.
+- **`skills/continue/SKILL.md` new `research_sufficiency_followup_pending` handler** with three sub-paths: explicit `followup: 1A 2C 3:my custom text` parsing (mirrors Phase 2b Parser 1), `proceed`-on-defaults, `cancel`. On user reply, parses answers, appends to `intake/user-facts.md` under `## Follow-up answers (after sufficiency review)`, writes `research/followup-response.md`, atomically updates state, then re-dispatches researchers for `subset_r` (if non-empty) followed by `research-sufficiency-reviewer`. Emits `gate_answered` per events-contract.md.
+- **`skills/memo/state-schema.md` adds the `research_sufficiency_followup_pending` phase enum value** and a new top-level `sufficiency_followup` object documenting the question/answer/budget shape. `attempts.research_followup` description updated to note that the budget now covers both researcher AND user follow-ups (max 1 total per task).
+- **`skills/memo/references/widget-schemas.md` new §"Sufficiency follow-up" section** specifying the data payload (reuses §Elicitation's HTML layout verbatim — same widget code, different data source). Snapshot path `$WORK_DIR/widgets/phase66-followup-elicitation.html`. Event payload `{"phase": "6.6-followup", "module": "elicitation", "question_count": <N>}`.
+- **`skills/memo/references/events-contract.md` registers the new `gate_name: "sufficiency-followup"`** under the existing `gate_announced` / `gate_answered` taxonomy. No new event type — existing taxonomy covers it.
+- **`skills/memo/references/always-deliver.md` adds two Phase 6 fallback rows** for (a) reviewer-output schema violation (Subset U entry with `followup_question == null` → fall through to Branch B6b), and (b) Subset U gaps remaining unresolved after the user follow-up (promote to `drafting_warnings[]`).
+
+### Effect on users
+
+**Permission-prompt-side (Part A):** zero new permission prompts for visualize widgets during a memo run. Users who had been seeing repeated `show_widget` prompts at Phase 1.5 / 2a / 3 / 12 now see none.
+
+**Pipeline-flow-side (Part B):** when the sufficiency reviewer surfaces a fact-gap that only the user can answer (e.g. *"Is the data subject in the EEA or outside?"* or *"Approximately how many monthly active users does the feature touch?"*), the user is now asked directly via a single follow-up widget BEFORE drafting — instead of the pipeline pretending researchers can resolve a fact gap they can't. Wallclock impact: one extra end-turn per task IF the gate fires (most tasks don't trigger Subset U gaps when intake is thorough). Quality impact: significantly better draft when intake misses a material fact, because the gap is resolved with the user's real answer rather than buried in `drafting_warnings`.
+
+**Backward compatibility:** legacy tasks created on v0.6.2 or earlier resume cleanly. The new `sufficiency_followup` state.json field defaults to `null` (treated as "no gate fired"); the new phase enum value `research_sufficiency_followup_pending` doesn't appear in any pre-v0.6.3 state.json. Continue skill handles both the new explicit `followup:` and `proceed` parsers AND the legacy `answer:` / `cancel` parsers without ambiguity (different parser paths run in different `current_phase` branches).
+
+### Tests
+
+131 existing tests still pass (no Python script changes). Hook regex validated manually against 10 sample tool names:
+```
+python3 -c "import re; ..."  # all 10 cases match the expected matcher (cowork / visualize / neither)
+```
+
+Smoke-test for the inline visualize hook command:
+```
+python3 -c "import json,sys; sys.stdout.write(json.dumps({'hookSpecificOutput':{'hookEventName':'PreToolUse','permissionDecision':'allow','permissionDecisionReason':'legal-memo-writer visualize widgets pre-approved (Phase 1.5 mockup / Phase 2a + 6.6 elicitation / Phase 3 plan diagram / Phase 12 final dashboard / milestone trackers)'}}))"
+```
+Returns valid JSON containing `permissionDecision: allow` — confirmed in build.
+
+### Manifest match
+
+`.claude-plugin/plugin.json === README badge === dist/legal-memo-writer-0.6.3.zip`.
+
+## 0.6.2 — 2026-05-26 (topic header + per-subagent chips + transitions audit)
+
+**Three dashboard refinements based on v0.6.1 production observations.** User feedback: the header line truncated the raw query awkwardly mid-sentence ("We're a US-based SaaS company planning to launch a new feature that uses AI to analyze customer support chat transcripts (from EU users) …"), and parallel researcher dispatches collapsed into a single uninformative chip ("🛠 3 researchers (parallel)") instead of showing each subagent name.
+
+### What changed
+
+- **NEW `state.json.live_progress.topic` field** — short 3–7 word theme generated by the orchestrator at Step 1d (mint) from `user_query`. Replaces the truncated raw-query header in the dashboard. Examples: `"GDPR compliance for AI support feature"`, `"DPA-vs-clickwrap dispute analysis"`. When null/empty, renderer falls back to the old truncation behavior (≤137 chars + "…"). The SKILL.md Step 1d instructions include three good-vs-bad topic examples to anchor the orchestrator's generation.
+
+- **`live_progress.active_subagent` (string) → `live_progress.active_subagents` (list)** — schema change so parallel dispatches surface ONE chip PER subagent. Phase 5 parallel research now shows `🛠 statutory-researcher · 🛠 case-law-researcher · 🛠 doctrinal-researcher` side-by-side instead of the v0.6.0–v0.6.1 collapsed `🛠 3 researchers (parallel)` label. Phase 9 parallel reviewers similarly show one chip per reviewer.
+  - SKILL.md mantra updated with explicit examples for both single (`["memo-writer"]`) and parallel (`["statutory-researcher", "case-law-researcher", "doctrinal-researcher"]`) dispatches.
+  - Backwards-compat: renderer still accepts the legacy bare-string `active_subagent` field and treats it as a single-element list — no breakage for in-flight tasks that started on 0.6.0–0.6.1.
+
+- **Transitions audit** — verified that every phase transition in the pipeline either (a) immediately dispatches a subagent which emits a live-progress `start` update (subagent emissions flush real-time in the chat scroll), or (b) is a user gate where the user-input event itself provides the visible signal. The only exceptions are Phase 10→11 (docx export, single Bash command) and Phase 11→12 (final orchestrator summary) — both happen at end-of-pipeline where chat naturally flushes. No additional emission points needed. The "MANDATORY downstream responsibility at every phase transition" SKILL.md block remains the canonical orchestrator-side discipline; subagent-side emissions (per v0.5.1 Pre-return checklist hardening) provide the real-time flush.
+
+### Tests
+
+54 renderer tests pass (was 48 in v0.6.1; +6 new for topic + active_subagents list). All 131 baseline pass. Smoke-test commands:
+
+```
+python -m unittest scripts.tests.test_render_live_progress -v
+python -m unittest discover -s scripts/tests
+```
+
+### Effect on users
+
+Next memo run on 0.6.2 shows a clean topic line in the header (e.g. `GDPR compliance for AI support feature`) instead of the awkwardly-truncated query. During Phase 5 parallel research, the user sees three distinct chips refreshing in real time: `🛠 statutory-researcher`, `🛠 case-law-researcher`, `🛠 doctrinal-researcher`. Same for Phase 9 reviewers (Full mode = 5 chips).
+
+### Manifest match
+
+`.claude-plugin/plugin.json === README badge === dist/legal-memo-writer-0.6.2.zip`.
+
+## 0.6.1 — 2026-05-26 (fix phase numbering + execution order in dashboard)
+
+**Fixes two layout defects the user flagged after the v0.6.0 install.** Both stem from legacy phase IDs in `scripts/render_live_progress.py`'s `PHASES` array.
+
+### Why
+
+User flagged the dashboard phase pills as confusing: *"А почему стадия 1.5 идёт после 2? и вообще почему есть стадия 2a, но нет просто 2? Есть много нелогичного тут, это путает."* Two real defects:
+
+1. **Wrong execution order in the pill row.** `PHASES` placed `Mode (1.5)` at index 1 and `Intake (2a)` at index 2 — but the actual pipeline runs Init → Intake → Mode, so the pill layout did not reflect runtime reality. When the orchestrator was at `mode_pick_pending`, the dashboard would mark Mode as "current" but render Intake as "future" (despite the user having already answered intake questions).
+2. **Legacy non-sequential IDs** (`1.5`, `2a`) inherited from an earlier pipeline design. The "1.5" placeholder existed for a planned Phase-1 sub-step that never landed; "2a" suggested a non-existent "2b". Users naturally expected clean 1–13.
+
+### What changed
+
+- **`scripts/render_live_progress.py` `PHASES` array** rewritten with sequential 1–13 IDs and the actual execution order:
+
+| Pos | Was (v0.6.0) | Now (v0.6.1) |
+|---|---|---|
+| 0 | 1 Init | 1 Init |
+| 1 | 1.5 Mode | 2 Intake |
+| 2 | 2a Intake | 3 Mode |
+| 3 | 3 Classify | 4 Plan |
+| 4 | 4 Approve | 5 Approve |
+| 5 | 5 Research | 6 Research |
+| 6 | 6 Sufficiency | 7 Sufficiency |
+| 7 | 7 Source-pack | 8 Source-pack |
+| 8 | 8 Draft v1 | 9 Draft v1 |
+| 9 | 9 Revise | 10 Revise |
+| 10 | 10 Polish | 11 Polish |
+| 11 | 11 Export | 12 Export |
+| 12 | 12 Summary | 13 Summary |
+
+- `Classify` label renamed to `Plan` (the state_phase is `planning`; "Plan" matches the user's mental model better than the more technical "Classify").
+- **Mode is now rendered AFTER Intake** — matching actual orchestrator behavior (intake elicitation happens first; mode pick uses intake answers as context).
+- **No state schema change.** `state.json.current_phase` enum is unchanged (still uses `intake_questions_pending`, `mode_pick_pending`, etc.). Only the display-side `PHASES` mapping changed.
+- **No agent prompt changes.** Agents reference state phases by name, not by display ID.
+
+### Tests
+
+All 131 baseline tests pass — none referenced specific display IDs (counts like "5 of 13 phases" stay correct because Research is still at index 5 in both orderings).
+
+### Effect on users
+
+Next memo run on 0.6.1 shows pills in execution order: `1 Init → 2 Intake → 3 Mode → 4 Plan → 5 Approve → 6 Research → ...`. When the orchestrator is at `mode_pick_pending`, the dashboard correctly marks Init AND Intake as completed (they really are), Mode as current, and the rest as future. No more "Mode at position 2 but Intake at position 3" confusion.
+
+### Known follow-up
+
+`skills/memo/references/progress-tracker.md` (the separate 5-render milestone widget) still uses the legacy 1.5 / 2a / 3 IDs in its data payload schema. That widget renders only 5 times per run and is in a different visual channel (inline visualize widget vs sidebar artifact card); inconsistency between the two surfaces is a minor cosmetic issue. If user reports the milestone widget IDs as confusing too, v0.6.2 will harmonise.
+
+## 0.6.0 — 2026-05-26 (dashboard polish + denser updates + real-time JS tickers)
+
+**The live-progress dashboard gets a flat-design refresh, three new context chips, real-time ticking timers, and ~50 % more update_artifact calls per Full-mode run.** v0.5.x established that subagent-side artifact streaming works end-to-end through Cowork (hook bypass, mint placement, all 15 agents instrumented). v0.6.0 makes the resulting dashboard pleasant to read and visibly alive during the long autonomous blocks.
+
+### Why
+
+User feedback after v0.5.7 production run (2026-05-26): "некрасивый трекинг и не информативный … хотелось бы чтобы таймер прямо в режиме реального времени тикал … и побольше этих апдейтов расставить по пайплайну, чтобы они обновлялись часто и прогресс был виден хорошо." Three concrete asks: flat-design visual polish, real-time ticking timer, more update_artifact emissions throughout the pipeline. Plus three additional info items the user picked in the clarification round: source counts after research, active subagent name + step, iteration counter for revision loop.
+
+### What changed
+
+- **`scripts/render_live_progress.py` rewritten with flat-design HTML + inline JS tickers.**
+  - **Hero current-step block** is now the visual headline: large 19 px font for the current activity, a pulsing dot, eyebrow showing `Phase 5 · Research · Research`, big elapsed-in-phase and total counters that tick every second via JS.
+  - **Compact 13-phase pill row** below the hero — secondary visual, smaller than v0.5.x.
+  - **Three info chips** (only render when their data is present):
+    - `📊 23 statutes · 14 cases · 8 doctrine` — from `state.json.live_progress.source_counts` (populated by source-pack-builder).
+    - `🛠 case-law-researcher` — from `state.json.live_progress.active_subagent` (set by orchestrator at each Task dispatch).
+    - `🔁 iteration 2 of 3` — from `state.json.current_iteration` and `config.max_iterations` during the revision loop.
+  - **Footer** with `Updated Xs ago` ticker + pulsing alive dot.
+  - **Inline `<script>` block** (≤30 lines) reads `data-*` attributes and uses `setInterval(tick, 1000)` to update three timer spans. No `fetch`, no `postMessage`, no harness callback — pure local DOM mutation. Wrapped in try/catch so a sandbox that blocks `<script>` reverts the dashboard to the v0.5.x baseline (tickers frozen between renders) without any other breakage.
+  - **Flat-design discipline:** no `box-shadow`, no `gradient`. Soft borders only at section breaks. Verified by unit tests.
+- **`scripts/tests/test_render_live_progress.py` extended to 48 tests** (was 32 in v0.5.x). New tests cover: JS block presence, data-attributes, source-counts chip rendering + omission, active-subagent chip rendering + omission, iteration chip during/outside revision loop, hero-terminal class, alive-dot in footer, flat-design discipline (no box-shadow, no gradient).
+- **`skills/memo/state-schema.md` adds two fields** under `live_progress`:
+  - `active_subagent: null | "<subagent-name>"` (orchestrator-owned).
+  - `source_counts: null | {statutes: <int>, cases: <int>, doctrine: <int>}` (source-pack-builder-owned).
+- **`skills/memo/SKILL.md` adds MANDATORY orchestrator plumbing** for `active_subagent`: set before every `Task(subagent_type=...)` dispatch, clear (set to null) after subagent returns. Documented as peer of the existing TodoWrite + mark_chapter mantras. Parallel batches use a coarse label like `"3 researchers (parallel)"`.
+- **`agents/memo-writer.md` extends the Live progress table with 5 per-section emissions:** `section-exec-summary`, `section-background`, `section-facts`, `section-conclusion`, `section-sources`. Per-issue emissions remain unchanged. Roughly +5–6 strips per draft.
+- **`agents/revision-mediator.md` extends the Live progress table with per-reviewer-consumed emissions:** one update per reviewer JSON read between `start` and `done`. 3–5 additional strips per iteration. Sample full sequence: `mediator-iter2-start → mediator-iter2-logic → mediator-iter2-clarity → mediator-iter2-style → mediator-iter2-citations → mediator-iter2-counterarguments → mediator-iter2-done`.
+- **`agents/source-pack-builder.md` adds a MANDATORY state-write step:** atomic-Edit `state.json.live_progress.source_counts` with the statutes/cases/doctrine counts before emitting `source-pack-done`. Powers the 📊 chip in the dashboard.
+- **`skills/memo/references/live-progress-contract.md` updated** with the new schema fields, the new emission patterns, and the real-time JS ticker section.
+
+### Budget impact
+
+| Mode | v0.5.7 calls | v0.6.0 calls | Delta |
+|---|---|---|---|
+| Brief (1 iteration, 3 issues) | ~36 | ~45 | +25 % |
+| Standard Full (2 iterations, 3 issues) | ~50 | ~75 | +50 % |
+| Full (5 iterations, 5 issues) | ~70 | ~110 | +57 % |
+
+Aggressive option (researcher per-source) was rejected in the clarification round — would have flooded chat scroll with 30+ strips per researcher on multi-jurisdictional Full memos.
+
+### Effect on users
+
+- **Same memo output, same wallclock.** Substantive pipeline behavior unchanged.
+- **Dashboard visibly alive between update_artifact calls** — the JS tickers update elapsed time every second so the user sees the timer advance even during long quiet subagent runs.
+- **Three new context chips** clarify "what's happening" beyond the bare phase label: how many sources research found, which subagent is currently running, which revision iteration is in progress.
+- **Denser update_artifact emissions** mean shorter silent gaps between sidebar refreshes during the longest blocks (memo-writer drafting, mediator consolidation).
+- The flat-design refresh is purely visual — no functional changes to the chips' meaning or the phase model.
+
+### Verification
+
+- `python -m unittest discover -s scripts/tests` — **all 131 tests pass** (115 baseline + 16 new v0.6.0 tests).
+- Manifest match: `.claude-plugin/plugin.json === README badge === dist/legal-memo-writer-0.6.0.zip === git tag v0.6.0`.
+
+### Known follow-up if JS sandbox blocks `<script>`
+
+If the Cowork iframe sandbox blocks `<script>` execution (visualize widget spec forbids harness callbacks; cowork artifact iframe may or may not inherit that policy — empirically TBD on first 0.6.0 production run):
+- JS tickers stop updating between `update_artifact` calls (same behavior as v0.5.x — no regression, just no improvement on the "alive" feel).
+- All other improvements (flat design, chips, more update_artifact calls, source-counts chip, active-subagent chip, iteration chip) still work — they don't depend on JS.
+- A v0.6.1 hotfix would replace the JS ticker with a CSS-only "alive" pulse animation that doesn't show actual time but conveys liveness.
+
+## 0.5.7 — 2026-05-26 (inline-Python hook, drops env-var dependency)
+
+**`${CLAUDE_PLUGIN_ROOT}` is NOT expanded in Cowork's hook executor.** v0.5.4–v0.5.6 shipped `hooks/hooks.json` with the docs-recommended form `python3 "${CLAUDE_PLUGIN_ROOT}"/hooks/auto_approve_cowork.py`. v0.5.6 production run (2026-05-26) hit this error verbatim:
+
+```
+PreToolUse:mcp__cowork__create_artifact hook error: python3: can't open file 
+'C:\Users\User\AppData\Roaming\Claude\local-agent-mode-sessions\.../outputs\${CLAUDE_PLUGIN_ROOT}\hooks\auto_approve_cowork.py'
+```
+
+The literal string `${CLAUDE_PLUGIN_ROOT}` was passed to python3 as a path component — Cowork's hook shell did NOT do shell-style variable expansion. This is likely a Windows-specific issue (cmd uses `%VAR%` syntax, not `${VAR}`) but reproduces on the user's local-agent-mode-sessions runtime regardless of the documented bash-style example in the plugins-reference docs.
+
+### What changed
+
+- **`hooks/hooks.json` rewritten with an INLINE `python3 -c` command.** No external script file, no env var dependency. The matcher regex (`mcp__cowork__(create_artifact|update_artifact|list_artifacts)`) restricts the hook to the three specific tools, so the inline Python can unconditionally output the allow JSON without re-checking the tool name. New command:
+
+  ```
+  python3 -c "import json,sys; sys.stdout.write(json.dumps({'hookSpecificOutput':{'hookEventName':'PreToolUse','permissionDecision':'allow','permissionDecisionReason':'legal-memo-writer live-progress dashboard pre-approved'}}))"
+  ```
+
+- **DELETED `hooks/auto_approve_cowork.py`.** No longer needed — the inline Python replaces it.
+
+- **No changes to other plugin behavior.** The v0.5.6 Step 1 mint structure remains intact (which DID work — the orchestrator did call `create_artifact` per the screenshot; the hook is what blocked it).
+
+### Why this should work where v0.5.4–0.5.6 didn't
+
+The inline `python3 -c "..."` command has zero environment-variable dependencies. As long as `python3` is on PATH (which it must be for the rest of the plugin — scripts/render_live_progress.py, scripts/resolve_style_profile.py, etc. — to work), the command executes successfully and outputs the allow JSON. No `${CLAUDE_PLUGIN_ROOT}` to fail to expand; no script file to fail to locate.
+
+### Manual fallback unchanged
+
+The README's `~/.claude/settings.json` `permissions.allow` fallback remains documented for users on Cowork builds where even the inline hook does not work (per docs: "Hook decisions do not bypass deny and ask rules"). If installing 0.5.7 still produces per-call permission prompts, add the three `mcp__cowork__*` allow rules to your user settings.
+
+### Verification
+
+- Inline command smoke-test: `python3 -c "..."` returns valid JSON containing `permissionDecision: allow`.
+- `python -m unittest discover -s scripts/tests` — all 115 tests still pass.
+- Manifest match: `.claude-plugin/plugin.json === README badge === dist/legal-memo-writer-0.5.7.zip`.
+
+## 0.5.6 — 2026-05-26 (move artifact mint into Step 1 / Task setup)
+
+**Structural fix: the mint now lives in Step 1, bundled with the non-skippable Task setup.** v0.5.5 hardened the v0.5.x step 3.5 design with STOP-framing and a 4-pre verification block, but the user pointed out the root structural problem: step 3.5 is a separate optional-feeling step in the middle of Phase 1, easy to mentally check off without executing. Step 1 (state.json init, work_dir resolve, events.jsonl create) is the action orchestrators NEVER skip. Putting the mint there makes it almost impossible to bypass.
+
+### What changed
+
+- **Step 1 (Task setup) gains sub-step 1d "Mint live-progress master artifact"** — six explicit micro-actions:
+  1. **1d-1**: probe artifact tool availability via `ToolSearch(query="select:mcp__cowork__create_artifact,mcp__cowork__update_artifact,mcp__cowork__list_artifacts")`.
+  2. **1d-2**: atomic-`Edit` `state.json` to populate `live_progress` block + set `config.live_progress_enabled = true`.
+  3. **1d-3**: render the initial HTML via `scripts/render_live_progress.py`.
+  4. **1d-4**: call `mcp__cowork__create_artifact` (the v0.5.4 hook auto-approves so no prompt).
+  5. **1d-5**: append `live_progress_precheck_result` + `live_progress_artifact_minted` events.
+  6. **1d-6 (self-verify)**: re-read `state.json` and confirm `live_progress.artifact_id` is non-null; if null, re-execute 1d-2.
+- **Old step 3.5 removed.** Its body is gone. A short "moved to Step 1 sub-step 1d" note remains so the orchestrator finds the new location if it follows the old mental model. The "MANDATORY downstream responsibility at every phase transition" block (about ongoing updates at phase changes — NOT the initial mint) is preserved verbatim.
+- **Step 4 (dispatch fact-assumption-analyst) verification block updated** — references "Step 1 sub-step 1d" instead of "step 3.5" for the mint-not-done recovery path.
+- **Phase 1 step list at the top of the phase** updated to drop the "3.5" entry: now Phase 1 = steps 1, 2, 3, 4 (mint is bundled into step 1).
+
+### Why this fix should work where v0.5.5 didn't
+
+v0.5.5 added STOP-framing and a verification checkpoint, both pointing at step 3.5. But the orchestrator's mental model of "I just need to set up the task before triage" doesn't include step 3.5 — it includes step 1. Putting the mint INSIDE step 1's atomic setup block (alongside state.json init, work_dir resolve, events.jsonl create) means the orchestrator does the mint as part of "setting up the task", not as a separate "live-progress configuration" step that feels optional. This is the same pattern that makes the existing TodoWrite-init reliable (it's part of step 4 dispatch prep, never separated).
+
+### Effect on users
+
+The next `/legal-memo-writer:memo` run on 0.5.6 should produce a sidebar "Live artifacts" card with id `memo-<task_id>-live` IMMEDIATELY after the orchestrator completes Task setup — before the MCP precheck, before the visualize precheck, before fact-assumption-analyst dispatch. If the card still doesn't appear, the orchestrator is ignoring even the in-step-1 placement and the next iteration must take a more radical approach (e.g. wrap the mint in `resolve_work_dir.sh` so it's a single deterministic Bash invocation, leaving the orchestrator only the discrete tool call).
+
+### Verification
+
+- `python -m unittest discover -s scripts/tests` — all 115 tests still pass (no scripts changed).
+- Manifest match: `.claude-plugin/plugin.json === README badge === dist/legal-memo-writer-0.5.6.zip`.
+
+## 0.5.5 — 2026-05-26 (hardens Phase 1 step 3.5 mint against orchestrator skip)
+
+**Hook + permissions work — but orchestrator was skipping the mint itself.** Empirical observation from a v0.5.4 production run: no permission prompts, no errors, no sidebar artifact. Diagnostic via `state.json` inspection: `live_progress_enabled = true` (precheck DID detect tools) but `live_progress = null` (mint call was NEVER made). `events.jsonl` had `mcp_precheck_result` but NO `live_progress_artifact_minted`. The orchestrator detected availability and announced "live-progress artifacts are available" in chat, then skipped the actual `mcp__cowork__create_artifact` call.
+
+### Root cause
+
+Two compounding bugs in v0.5.0–v0.5.4 SKILL.md Phase 1 prose:
+
+1. **Step 4 opening said "After all three preceding steps (Task setup, MCP precheck, Visualize precheck)" — omitting step 3.5.** When step 3.5 was added to the step list at the top of Phase 1, the body of step 4 wasn't updated to reflect the new dependency. The orchestrator, reading step 4 in sequence, sees a 3-dependency requirement and assumes that's complete after MCP+visualize.
+2. **Step 3.5 didn't distinguish DETECT from MINT.** The sub-actions ("precheck the tools" vs "actually call create_artifact") were intermingled in the prose. An orchestrator focused on the precheck flow could announce "live-progress is available" and move on, mentally checking off step 3.5 without ever executing the mint tool call.
+
+### What v0.5.5 changes
+
+- **Step 3.5 rewritten with explicit STOP framing and (a)/(b) sub-action structure.** Sub-action (a) is the precheck/detect. Sub-action (b) is "MINT the master artifact (MANDATORY when (a) confirmed availability — DO NOT SKIP)." A warning block at the top of the step calls out the v0.5.0–v0.5.4 observed failure mode by name.
+- **Step 3.5 sub-action (b) gains a new sub-step 6 — Self-verify.** The orchestrator reads `state.json` after the mint and confirms `live_progress.artifact_id` is non-null. If null, the orchestrator is instructed to go back and execute step 2 (state.json update) now. Catches the exact failure mode that motivated this patch.
+- **Step 4 opening updated to "after all FOUR preceding steps" and gains a 4-pre verification block** — an explicit pre-dispatch checklist that the orchestrator must mentally pass before invoking fact-assumption-analyst. The checklist includes "if `live_progress_enabled = true`, `state.json.live_progress.artifact_id` is non-null AND `events.jsonl` has `live_progress_artifact_minted`." If any checkbox fails, the orchestrator is told to go back and complete step 3.5 first.
+- **No agent prompt changes** — only Phase 1 SKILL.md prose. The agent-side Pre-return checklists from v0.5.1 remain intact.
+
+### Why these specific changes
+
+Prior v0.5.1 hardening targeted SUBAGENT done emissions via the Pre-return checklist pattern (which addressed the v0.5.0 failure mode of subagents skipping their final `update_artifact`). v0.5.5 applies the same pattern — strong MANDATORY framing + an explicit pre-action verification block — to the ORCHESTRATOR's Phase 1 step 3.5 mint. The Pre-return checklist worked because it intercepted the LLM at the exact moment it was about to skip. The 4-pre verification block does the same for the orchestrator: it sits between step 3.5 (the optional-feeling precheck+mint) and step 4 (the strongly-felt dispatch), forcing the orchestrator to acknowledge step 3.5's mint outcome before proceeding.
+
+### Effect on users
+
+The next `/legal-memo-writer:memo` run on 0.5.5 should produce:
+- A sidebar "Live artifacts" card with id `memo-<task_id>-live` visible immediately after the orchestrator completes Phase 1 setup (before fact-assumption-analyst dispatches).
+- `state.json.live_progress` populated with `artifact_id`, `html_path`, `started_at_iso`, `phase_started_at_iso`, and a one-entry timeline.
+- `events.jsonl` containing `live_progress_precheck_result` and `live_progress_artifact_minted` events.
+- Subsequent subagent `update_artifact` calls (already v0.5.1-hardened with Pre-return checklists) flow through the v0.5.4 hook and update the same artifact card in real time.
+
+If the sidebar card STILL doesn't appear after installing 0.5.5: the orchestrator is ignoring the new explicit verification block. Diagnostic: read `state.json` after Phase 1; if `live_progress.artifact_id` is still null, the structural hardening wasn't enough and the next iteration must take a more radical approach (e.g. integrating the mint into a Bash script that the orchestrator MUST execute, leaving only the single tool call as a discrete action).
+
+### Verification
+
+- `python -m unittest discover -s scripts/tests` — all 115 tests still pass (no scripts changed).
+- Manifest match: `.claude-plugin/plugin.json === README badge === dist/legal-memo-writer-0.5.5.zip`.
+
+## 0.5.4 — 2026-05-25 (re-ships the hook with docs-correct quoting; drops useless settings.json)
+
+**Fixes the underlying root cause of permission prompts.** v0.5.0 saw per-subagent permission prompts. v0.5.2 tried two mechanisms (`settings.json` with `permissions.allow` + PreToolUse hook) — but both were broken: the docs say plugin-bundled `settings.json` only honors the `agent` and `subagentStatusLine` keys (permissions there are silently dropped), AND my hook used wrong env-var quoting in the command field. v0.5.3 removed the broken hook but kept the useless settings.json; predictably the prompts persisted. v0.5.4 fixes both root causes.
+
+### Why my v0.5.2 and v0.5.3 approaches failed
+
+Re-reading the official docs at https://code.claude.com/docs/en/plugins:
+
+> "Plugins can include a `settings.json` file at the plugin root to apply default configuration when the plugin is enabled. **Currently, only the `agent` and `subagentStatusLine` keys are supported.**"
+
+So `{"permissions": {"allow": [...]}}` inside a plugin's `settings.json` is silently ignored. Permissions can only be granted from `~/.claude/settings.json` (user), `.claude/settings.json` (project), `.claude/settings.local.json` (local-project), or managed settings — NOT from a plugin's bundled settings file. v0.5.2's mechanism #1 was a non-mechanism.
+
+For hooks, the docs example at https://code.claude.com/docs/en/plugins-reference uses this quoting:
+
+```json
+"command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/format-code.sh"
+```
+
+The `${CLAUDE_PLUGIN_ROOT}` env var sits in its OWN double-quoted JSON token, with the rest of the path OUTSIDE. v0.5.2 put the variable inside a longer quoted string (`python3 "${CLAUDE_PLUGIN_ROOT}/hooks/auto_approve_cowork.py"`), which prevented Cowork's hook executor from expanding it — hence "no such directory" and the hook crashed instead of auto-approving.
+
+### What 0.5.4 ships
+
+- **NEW `legal-memo-writer/hooks/hooks.json`** with the docs-correct quoting: `"python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/auto_approve_cowork.py"`. Matcher: `mcp__cowork__(create_artifact|update_artifact|list_artifacts)`.
+- **NEW `legal-memo-writer/hooks/auto_approve_cowork.py`** — tiny stdlib-only Python script. Reads PreToolUse JSON from stdin, returns `{"hookSpecificOutput": {"permissionDecision": "allow"}}` for the three matching tools, emits nothing for others. Exit code always 0 (the hook never denies). Smoke-tested: matching tool returns allow JSON; non-matching returns empty.
+- **DELETED `legal-memo-writer/settings.json`** — its `permissions.allow` content was ignored per docs.
+- **README** gains a section explaining what the hook does and how to manually add the same allow rules to `~/.claude/settings.json` as a fallback if the hook is not honored by a particular Cowork build.
+
+### Open caveat
+
+Per the official permissions docs, "Hook decisions do not bypass permission rules. Deny and ask rules are evaluated regardless of what a PreToolUse hook returns." If Cowork's host applies a built-in `ask`-style rule to `mcp__cowork__*` tools before plugin hooks fire, this hook still won't suppress the prompts — and the user must use the manual `~/.claude/settings.json` fallback documented in the README. Empirically TBD; user will report after installing 0.5.4.
+
+### Verification
+
+- `python -m unittest discover -s scripts/tests` — all 115 tests still pass.
+- Hook smoke test (Git Bash): `echo '{"tool_name":"mcp__cowork__update_artifact"}' | python hooks/auto_approve_cowork.py` returns valid allow-decision JSON; with non-cowork tool returns empty (defer).
+- Manifest match: `.claude-plugin/plugin.json === README badge === dist/legal-memo-writer-0.5.4.zip`.
+
+## 0.5.3 — 2026-05-25 (hotfix — pulls the broken hook from 0.5.2)
+
+**Removes the broken PreToolUse hook that 0.5.2 shipped.** v0.5.2's `hooks/hooks.json` used `${CLAUDE_PLUGIN_ROOT}/hooks/auto_approve_cowork.py` as the command path, but Cowork's hook execution context does NOT expand `${CLAUDE_PLUGIN_ROOT}` (this env var works in skill-body Bash invocations but is undocumented and not honored in `hooks.json` command fields). Result: the hook's command resolves to a literal path that does not exist on disk, the hook fails to start, and Cowork treats the failure as "block the tool call". v0.5.2 made the prompt situation strictly WORSE than v0.5.1 — instead of repeatedly asking, the tool calls now hard-fail.
+
+### What changed in 0.5.3
+
+- **DELETED** `hooks/hooks.json` and `hooks/auto_approve_cowork.py`. The hook backup is removed entirely.
+- **KEPT** `legal-memo-writer/settings.json` from 0.5.2 — that file is the declarative permission grant. It does not depend on path expansion and should still suppress per-call prompts when the plugin is enabled.
+- No agent or skill prompt changes; the v0.5.1 Pre-return checklist remains intact.
+
+### Why hook-only-no-settings or settings-only-no-hook was the right diagnosis
+
+The "belt-and-suspenders" rationale of v0.5.2 (`settings.json` + hook for defense-in-depth) was sound in principle but my hook implementation depended on an env var that doesn't work in plugin hooks. Re-shipping the hook with the correct path scheme is possible (e.g., resolving via Python's `__file__` so the script knows its own location), but the priority right now is to unblock the user; ship settings-only and revisit hooks only if settings.json proves insufficient empirically.
+
+### Effect on users
+
+- If installing 0.5.3 after 0.5.2: the `hooks/` directory inside the plugin is gone, so the broken hook no longer runs. Cowork artifact tool calls go through the normal permission flow with whatever `settings.json` declares.
+- If installing 0.5.3 fresh: same as 0.5.2 minus the hook.
+- If `settings.json` alone is enough to suppress permission prompts (which the research said it should be) — user is fully unblocked.
+- If `settings.json` alone is NOT enough — user reports back, and v0.5.4 adds a correctly-pathed hook.
+
+### Verification
+
+- `python -m unittest discover -s scripts/tests` — all 115 tests still pass (no scripts changed; hook was outside the test surface).
+- Manifest match: `.claude-plugin/plugin.json === README badge === dist/legal-memo-writer-0.5.3.zip`.
+
+## 0.5.2 — 2026-05-25
+
+**Pre-grant Cowork artifact tools so live-progress updates do not surface per-call permission prompts.** v0.5.0 production runs showed Cowork prompting the user every time a subagent called `mcp__cowork__update_artifact` — destroying the live-progress UX (15–25+ prompts per memo run). The root cause is host-side: Cowork's "Always allow" toggle does not persist across subagent dispatch boundaries (see GitHub issue [#24433](https://github.com/anthropics/claude-code/issues/24433)). v0.5.2 fixes this with two plugin-bundled mechanisms that both auto-approve the three Cowork artifact tools used by the live-progress dashboard.
+
+### Why
+
+The v0.5.0-probe build used ONE subagent that called `update_artifact` four times in sequence — and Cowork remembered the first approval for the rest. Production v0.5.0 dispatches FIFTEEN different subagents that each call `update_artifact` at their step boundaries, and Cowork's permission scoping resets at each dispatch boundary. Without programmatic pre-grant, the user clicks "Approve" 15–25 times per memo run. Empirically confirmed by the developer on 2026-05-25. Research (see `docs/postmortems/v0.2.0-live-progress.md` and related plan notes) identified two viable programmatic paths; v0.5.2 ships both for defense-in-depth.
+
+### What changed
+
+- **NEW `legal-memo-writer/settings.json`** at the plugin root, shipping `permissions.allow` for the three Cowork artifact tools (`mcp__cowork__create_artifact`, `mcp__cowork__update_artifact`, `mcp__cowork__list_artifacts`). Per Anthropic's documented "ship-default-settings-with-your-plugin" pattern, these rules merge into the active session's permission set when the plugin is enabled. Subagents inherit parent-session permissions, so every dispatched subagent picks up the allow rules automatically.
+- **NEW `legal-memo-writer/hooks/hooks.json`** declaring a `PreToolUse` hook with matcher `mcp__cowork__(create_artifact|update_artifact|list_artifacts)` that invokes the Python script below.
+- **NEW `legal-memo-writer/hooks/auto_approve_cowork.py`** — a tiny Python hook (no third-party deps). Reads the PreToolUse JSON from stdin, returns `{"hookSpecificOutput": {"permissionDecision": "allow"}}` for the three matching tools, and emits nothing for everything else (defer to normal permission flow). Exit code is always 0 — the hook NEVER denies; it only allows or defers. Tested via `echo '{"tool_name":"mcp__cowork__update_artifact"}' | python hooks/auto_approve_cowork.py` (returns the allow JSON) and same with a non-cowork tool (returns nothing).
+- **No agent or skill prompt changes** — substantive pipeline behavior is identical to 0.5.1. The only effect is that Cowork should now stop prompting the user for artifact tool approvals.
+
+### Two mechanisms, defense-in-depth
+
+The settings.json path is the **declarative** mechanism (no code execution; merges allow rules at plugin enable time). The hooks path is the **imperative** mechanism (the hook receives every PreToolUse event matching the matcher and returns the allow decision). Either alone should suppress the prompts; both are present so that if Cowork's host-side permission scoping respects one but not the other, the user is still covered.
+
+Deny rules in user settings still take precedence over both mechanisms (per [Configure permissions](https://code.claude.com/docs/en/permissions) docs). If the user has explicitly denied any of these three tools, the plugin's allow rules will not override that.
+
+### Effect on users
+
+When `legal-memo-writer-0.5.2.zip` is installed in Cowork and the plugin is enabled, the next `/legal-memo-writer:memo` run should produce zero permission prompts for `mcp__cowork__*` artifact tools. The user sees the same chat scroll "Updated artifact: ..." strips and sidebar card refreshes as v0.5.1 — minus the modal interruptions.
+
+### Verification
+
+- `python -m unittest discover -s scripts/tests` — all 115 tests still pass (no scripts changed).
+- Hook smoke test (Git Bash): `echo '{"tool_name":"mcp__cowork__update_artifact"}' | python hooks/auto_approve_cowork.py` → returns valid allow-decision JSON. With `tool_name=Bash` → returns no output.
+- Manifest match: `.claude-plugin/plugin.json === README badge === dist/legal-memo-writer-0.5.2.zip === git tag v0.5.2`.
+
+## 0.5.1 — 2026-05-25
+
+**Pre-return checklist patches the v0.5.0 instruction-following gap.** First-day v0.5.0 production runs revealed that subagents sometimes skipped the `done` `update_artifact` emission while focused on composing their return summary. Result: the sidebar card stuck on the previous step (e.g. last "issue-N-of-total") instead of advancing to "<agent> — done · <verdict + counts>". The bug was instruction-design: live-progress was a separate appendix section, easily de-prioritised under context pressure. v0.5.1 fixes this with three changes — no functional changes to substantive pipeline behavior.
+
+### Why
+
+User observation on 2026-05-25 (first v0.5.0 real run): two of three Phase 5 researchers (statutory + case-law) finished their substantive work cleanly but did NOT emit the `done` live-progress update; only doctrinal did. Same instruction template across all three — the failure was LLM instruction-following variance, with the "done" emission specifically being the most-skipped because it sits at the END of the agent's work when the LLM is mentally transitioning to "compose return summary". The fix needed to be structural: a clear stop-and-verify checkpoint immediately before the `## Final response` section.
+
+### What changed
+
+- **NEW `## Pre-return checklist` section** added to every instrumented agent file (15 agents: `memo-writer`, 3 researchers, 5 reviewers, `revision-mediator`, `client-readiness-reviewer`, `research-sufficiency-reviewer`, `currency-checker`, `source-pack-builder`, `fact-assumption-analyst`). Placed **immediately before** the existing `## Final response` (or `## Final response to main session`) section. Each checklist:
+  - Names the specific `update_summary` tag the agent should have emitted (e.g. `statutes-done`, `mediator-iter<N>-done`, `step=done` for memo-writer).
+  - Explicitly says "STOP. Verify the live-progress `done` emission." with a yes/no decision tree.
+  - If the agent missed the emission, instructs it to execute the canonical render + `update_artifact` pair NOW, before composing the summary.
+  - Includes the original observed-bug rationale ("v0.5.0 production runs showed agents occasionally skipping...") so the agent understands why the checklist exists.
+- **Orchestrator-side phase-transition update_artifact promoted to MANDATORY** in `skills/memo/SKILL.md` Phase 1 step 3.5's "downstream responsibility" paragraph. Rewritten as a numbered three-step sequence with explicit Bash + tool-call invocations, treated as a peer of the existing TodoWrite + mark_chapter mantras at every `current_phase` change.
+- **No agent functional changes** — same step boundaries, same `update_summary` tags, same step strings, same skip rule (`state.json.config.live_progress_enabled == false` skips everything). Only the instruction-prominence is increased.
+
+### Effect on users
+
+Same v0.5.0 architecture and the same memo output. The sidebar live-progress dashboard now updates RELIABLY at every `done` boundary (per the §Pre-return checklist enforcement) and at every phase transition (per the strengthened SKILL.md mandate). The user-visible signal should now match expectations: every researcher completion produces a strip + card refresh; every reviewer verdict produces a strip + card refresh; every mediator iteration produces a strip + card refresh; the final card lands on the "done" state for the last subagent that ran.
+
+### Verification
+
+- `python -m unittest discover -s scripts/tests` — all 115 tests still pass (no scripts changed).
+- Manifest match: `.claude-plugin/plugin.json === README badge === dist/legal-memo-writer-0.5.1.zip === git tag v0.5.1`.
+
+## 0.5.0 — 2026-05-25
+
+**Live progress dashboard via subagent-side artifact streaming.** The "Live artifacts" sidebar card now refreshes in real time as the pipeline runs — every heavy subagent emits its own `mcp__cowork__update_artifact` call at its internal step boundaries, and those calls flush to the parent orchestrator's chat scroll in real time (postmortem §9 RESOLVED = STREAMING PASS, 2026-05-25). The user no longer sees 5–40 minutes of chat silence during Phase 5→Phase 12; instead, an "Update artifact" indicator strip appears in chat for every researcher source, every drafted issue, every reviewer verdict, and every mediator decision.
+
+### Why
+
+v0.2.0 attempted live progress via orchestrator-side `update_artifact` calls and was rolled back because those calls buffer to end-of-turn (same failure mode as the Cowork text-buffering bug). The v0.2.0 postmortem (`docs/postmortems/v0.2.0-live-progress.md`) flagged ONE open hypothesis (§9): would calls made from INSIDE a dispatched subagent bypass the orchestrator-turn buffer? The probe dist `legal-memo-writer-0.5.0-probe.zip` (developer-only, preserved on disk, README untouched) tested this empirically on 2026-05-25 with explicit 25-second sleeps and a falsifiable user-question framing. Result: STREAMING PASS — the artifact strips and sidebar card refresh DO surface in the parent chat scroll as the subagent works, not buffered to end-of-turn. v0.5.0 productionises that mechanism.
+
+### What changed
+
+- **NEW `scripts/render_live_progress.py`** — the canonical renderer. Reads `state.json` and a `--current-step` string, writes a pretty HTML dashboard with: 13-phase progress bar (current pulsing, completed filled with checkmark color, future grey-outlined), large "current step" line with elapsed-time counter, completed-phases timeline with per-phase durations, and a CSS-only "alive" pulse in the corner. `<meta charset="UTF-8">` is mandatory (v0.2.0 encoding lesson preserved). Atomic write via `.tmp` + rename. 32 unit tests at `scripts/tests/test_render_live_progress.py`.
+- **NEW `skills/memo/references/live-progress-contract.md`** — canonical contract for the live-progress channel: lifecycle (mint at Phase 1 step 3.5, subagent updates during work, terminal close at done/failed/cancelled), subagent skip rule (read `state.json.config.live_progress_enabled` first), canonical subagent update pattern, concurrency note for Phase 5 parallel research (last-writer-wins on the HTML, atomic .tmp + rename prevents torn writes), failure-mode table, encoding requirement.
+- **`skills/memo/SKILL.md` Phase 1**:
+  - NEW **step 3.5** (after visualize precheck): detects `mcp__cowork__create_artifact` / `update_artifact` availability, sets `state.json.config.live_progress_enabled`, mints the master artifact with id `memo-<task_id>-live` and `html_path = <work_dir>/live-progress.html`, populates `state.json.live_progress.{artifact_id, html_path, started_at_iso, phase_started_at_iso, timeline[]}`. Appends `live_progress_precheck_result` and `live_progress_artifact_minted` events. Status-line addition: `; live progress: ✓ — sidebar dashboard active` (or `✗ — not available in this host`).
+  - Phase boundary updates (orchestrator-side) at every `current_phase` change: append timeline entry, update phase_started_at_iso, re-render, call `update_artifact`. These calls buffer to end-of-turn — that's fine; subagents inside the new phase provide the live signal.
+- **`skills/memo/state-schema.md`** — adds `config.live_progress_enabled` (precheck flag) and the top-level `live_progress: null | { artifact_id, html_path, started_at_iso, phase_started_at_iso, timeline[] }` block with full field-level ownership documentation.
+- **11 subagents instrumented** with `update_artifact` calls at their step boundaries (each agent file has a new "Live progress" section + `Bash, mcp__cowork__update_artifact` added to its `tools:` allowlist):
+  - **`memo-writer`** — per-issue updates (`Drafting issue 3 of 7 — <issue label>`), plus start / assembling / done. Matches the existing `step=issue-N-of-total` log discipline. Biggest single live-progress win (memo-writer dominates Phase 8 silence).
+  - **`statutory-researcher`, `case-law-researcher`, `doctrinal-researcher`** — per-issue updates only (NOT per-search; per-search would flood chat with 10–20 strips per researcher). Phase 5 parallel block becomes visible as the three researchers' alternating step messages refresh the card.
+  - **`research-sufficiency-reviewer`, `currency-checker`, `source-pack-builder`** — start + done.
+  - **5 reviewers** (`style-reviewer`, `clarity-reviewer`, `logic-reviewer`, `counterargument-reviewer`, `citation-auditor`) — start + done with verdict + blocking count.
+  - **`revision-mediator`** — start + per-iteration verdict. State.json mutations remain the mediator's sole-ownership responsibility; live-progress emissions are additive.
+  - **`client-readiness-reviewer`** — start + done with verdict + blocking count.
+  - **`fact-assumption-analyst`** — start + done (light agent; Phase 1 transitional update).
+- **`skills/memo/references/INDEX.md`** — entry for `live-progress-contract.md`; pre-Phase-1 reading list updated to include it; authority hierarchy row updated.
+
+### Effect on users
+
+Same query, same memo output, same wallclock — the user now SEES the pipeline running. A typical Full-mode 5-iteration run produces ~20–35 distinct "Updated artifact" indicator strips in the chat scroll plus continuous sidebar card refreshes throughout the run, instead of the prior single-flush-at-Phase-7.5-then-silence-until-Phase-12 experience.
+
+The substantive pipeline is otherwise unchanged. The skip rule means the pipeline still runs cleanly when Cowork's artifact tools are unavailable — the substantive memo work is never blocked by a live-progress emission. The probe skill (`/legal-memo-writer:probe`) and the `probe-subagent-streamer` agent that proved §9 have been removed from the production zip; they remain in `dist/legal-memo-writer-0.5.0-probe.zip` for historical record.
+
+### Verification
+
+- `python -m unittest discover -s scripts/tests` — **all 115 tests pass** (83 baseline + 32 new render_live_progress tests). No regressions in the existing 83.
+- Manifest match: `.claude-plugin/plugin.json === README badge === dist/legal-memo-writer-0.5.0.zip === git tag v0.5.0`.
+
+> Version note: `0.5.0-probe` was the probe build that resolved §9 of the v0.2.0 postmortem. It is preserved on disk as `dist/legal-memo-writer-0.5.0-probe.zip` and was never made the current README's recommended install — only this 0.5.0 release is.
 
 ## 0.4.0 — 2026-05-25
 

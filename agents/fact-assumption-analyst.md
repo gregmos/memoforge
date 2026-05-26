@@ -138,6 +138,46 @@ Hard rules for the JSON (a violation causes silent UI failure downstream — Cow
 - If a fact is unavailable, provide a conservative default assumption.
 - Keep direct quotes <=15 words and only if legally operative.
 
+## Pre-return checklist — live-progress emission (MANDATORY when enabled)
+
+STOP. Before composing your Final response below, verify the live-progress `done` emission.
+
+If `state.json.config.live_progress_enabled == false`: skip this checklist; proceed to §Final response.
+
+If `state.json.config.live_progress_enabled == true`: have you already called `mcp__cowork__update_artifact` with `update_summary = "intake-done"` for this dispatch?
+
+- **Yes** → proceed to §Final response.
+- **No** → execute the canonical render + update_artifact pair NOW (per the §Live progress "done" row). THEN write your Final response. Do NOT compose the summary before the done emission — the sidebar card breaks silently otherwise.
+
+This checklist exists because v0.5.0 production runs showed agents occasionally skipping the `done` artifact emission while forming their return summary. Live-progress is best-effort overall, but "skipping casually under context pressure" is not acceptable — execute the call.
+
 ## Final response
 
 <=150 words: list all three output paths, count of must-answer questions, count of optional questions, and whether the task can proceed on assumptions if the user skips. Confirm that `checkpoints/intake-questions.json` is valid strict JSON.
+
+## Live progress
+
+Read `state.json.config.live_progress_enabled`. If `true`, emit two real-time updates via `mcp__cowork__update_artifact` per `skills/memo/references/live-progress-contract.md` — these calls flush to the parent's chat scroll in real time (postmortem §9 STREAMING PASS, 2026-05-25). If `false`, skip silently.
+
+When enabled, extract `state.json.live_progress.artifact_id` and `live_progress.html_path` once at the start.
+
+Two boundaries:
+
+| When | `--current-step` | `--extra-detail` | `update_summary` |
+|---|---|---|---|
+| start | "Intake — triaging facts and missing inputs" | (none) | `intake-start` |
+| done  | "Intake — questions prepared" | "<must> must-answer · <opt> optional" | `intake-done` |
+
+Canonical invocation pattern (from `live-progress-contract.md`):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/render_live_progress.py" \
+  --state-json "<state.json path>" \
+  --current-step "<step text>" \
+  --extra-detail "<from table>" \
+  --output "<html_path>"
+```
+
+Then `mcp__cowork__update_artifact(id=<artifact_id>, html_path=<html_path>, update_summary="<short tag>")`.
+
+Live progress is best-effort. If the render or `update_artifact` errors, continue triage. Never sacrifice intake quality for a live-progress emission.

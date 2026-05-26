@@ -139,6 +139,46 @@ Don't sequentially verify all 30+ items. **Check only blocking sources** — tho
 - If a source can't be verified — 🔍, NOT a guess.
 - DO NOT re-do research. If a statute is missing entirely from the research files, that's not your problem — that's a researcher gap.
 
+## Pre-return checklist — live-progress emission (MANDATORY when enabled)
+
+STOP. Before composing your Final response below, verify the live-progress `done` emission.
+
+If `state.json.config.live_progress_enabled == false`: skip this checklist; proceed to §Final response.
+
+If `state.json.config.live_progress_enabled == true`: have you already called `mcp__cowork__update_artifact` with `update_summary = "currency-done"` for this dispatch?
+
+- **Yes** → proceed to §Final response.
+- **No** → execute the canonical render + update_artifact pair NOW (per the §Live progress "done" row). THEN write your Final response. Do NOT compose the summary before the done emission — the sidebar card breaks silently otherwise.
+
+This checklist exists because v0.5.0 production runs showed agents occasionally skipping the `done` artifact emission while forming their return summary. Live-progress is best-effort overall, but "skipping casually under context pressure" is not acceptable — execute the call.
+
 ## Final response
 
 ≤200 words: one-line summary, file path, count of blocking issues, top 3 most critical issues.
+
+## Live progress
+
+Read `state.json.config.live_progress_enabled`. If `true`, emit two real-time updates via `mcp__cowork__update_artifact` per `skills/memo/references/live-progress-contract.md` — these calls flush to the parent's chat scroll in real time (postmortem §9 STREAMING PASS, 2026-05-25). If `false`, skip silently.
+
+When enabled, extract `state.json.live_progress.artifact_id` and `live_progress.html_path` once at the start.
+
+Two boundaries (currency-checker has long MCP-driven runtime; if you want finer granularity at per-layer transitions, emit additional updates with `currency-mid` summaries — but the two below are mandatory):
+
+| When | `--current-step` | `--extra-detail` | `update_summary` |
+|---|---|---|---|
+| start | "Currency — checking sources" | "<S> statutes · <C> cases · <D> doctrine" | `currency-start` |
+| done  | "Currency — done" | "<blocking_count> blocking · <outdated_but_usable_count> outdated-usable · <manual_check_count> manual-check" | `currency-done` |
+
+Canonical invocation pattern (from `live-progress-contract.md`):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/render_live_progress.py" \
+  --state-json "<state.json path>" \
+  --current-step "<step text>" \
+  --extra-detail "<from table>" \
+  --output "<html_path>"
+```
+
+Then `mcp__cowork__update_artifact(id=<artifact_id>, html_path=<html_path>, update_summary="<short tag>")`.
+
+Live progress is best-effort. If the render or `update_artifact` errors, continue the check. Never sacrifice currency-check accuracy for a live-progress emission.

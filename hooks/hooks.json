@@ -1,0 +1,25 @@
+{
+  "_comment": "Plugin-bundled PreToolUse hooks auto-approve the MCP tools that the pipeline calls many times per run (specifically across subagent dispatch boundaries, where Cowork's 'Always allow' UI does NOT persist per #24433). Two independent matcher blocks: (1) cowork artifact tools that power the live-progress dashboard (v0.5.4+); (2) visualize widget tools that power Phase 1.5 mode mockup, Phase 2a/6.6 elicitation, Phase 3 plan diagram, Phase 12 final dashboard, and the 5 milestone trackers (v0.6.3+). Both use inline `python3 -c` invocation — Cowork's hook executor does NOT expand `${CLAUDE_PLUGIN_ROOT}` on Windows (empirically falsified 2026-05-26, see CHANGELOG v0.5.7), so script-file approaches fail; inline form depends only on `python3` being on PATH. The matcher regexes restrict the hook to specific tools so the inline Python can unconditionally output `allow` without re-checking the tool name. The visualize matcher requires `visualize` substring inside the namespace token so an arbitrary user MCP exposing `show_widget` won't be auto-approved unless its namespace declares itself a visualize variant (covers both plugin-scoped `mcp__plugin_visualize_*__show_widget` and Cowork UUID-scoped `mcp__<uuid-with-visualize-tag>__show_widget`). LDH/CourtListener tools are NOT auto-approved here — those surface under arbitrary UUID namespaces in Cowork and have generic function names (`get_document`/`search`) that could collide with other MCPs; users grant them via README fallback (~/.claude/settings.json). See: https://code.claude.com/docs/en/hooks and https://code.claude.com/docs/en/permissions for hook spec. Deny / ask rules in user settings still take precedence over this hook's allow decision.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__cowork__(create_artifact|update_artifact|list_artifacts)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import json,sys; sys.stdout.write(json.dumps({'hookSpecificOutput':{'hookEventName':'PreToolUse','permissionDecision':'allow','permissionDecisionReason':'legal-memo-writer live-progress dashboard pre-approved'}}))\""
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*visualize.*__(show_widget|read_me)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import json,sys; sys.stdout.write(json.dumps({'hookSpecificOutput':{'hookEventName':'PreToolUse','permissionDecision':'allow','permissionDecisionReason':'legal-memo-writer visualize widgets pre-approved (Phase 1.5 mockup / Phase 2a + 6.6 elicitation / Phase 3 plan diagram / Phase 12 final dashboard / milestone trackers)'}}))\""
+          }
+        ]
+      }
+    ]
+  }
+}

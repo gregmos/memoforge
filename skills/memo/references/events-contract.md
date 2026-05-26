@@ -142,13 +142,13 @@ Fired immediately AFTER a `Task(...)` Agent call returns.
 
 ### `gate_answered`
 
-Fired AFTER every `AskUserQuestion` resolution OR text-based gate parse. Canonical gates as of v0.0.44: Phase 1.5 mode (AskUserQuestion), Phase 2a intake (visualize widget + text parse), Phase 4a plan approval (AskUserQuestion), Phase 7.5 source-review (text-parsed since v0.0.43). Phase 9.6b/6c iteration and Phase 10 polish gates were removed in v0.0.44 — they now fire `gate_auto_advanced` (see below) instead.
+Fired AFTER every `AskUserQuestion` resolution OR text-based gate parse. Canonical gates as of v0.6.3: Phase 1.5 mode (AskUserQuestion), Phase 2a intake (visualize widget + text parse), Phase 4a plan approval (AskUserQuestion), Phase 6.6 sufficiency follow-up (visualize widget + text parse, v0.6.3+), Phase 7.5 source-review (text-parsed since v0.0.43). Phase 9.6b/6c iteration and Phase 10 polish gates were removed in v0.0.44 — they now fire `gate_auto_advanced` (see below) instead.
 
 - **Actor:** the calling skill
 - **`data` shape:**
   ```json
   {
-    "gate_name": "mode-pick | intake-elicitation | plan-approval | source-review",
+    "gate_name": "mode-pick | intake-elicitation | plan-approval | sufficiency-followup | source-review",
     "options_offered": ["continue", "cancel"],
     "chosen": "continue",
     "was_fallback": false,
@@ -158,6 +158,7 @@ Fired AFTER every `AskUserQuestion` resolution OR text-based gate parse. Canonic
 
 - `was_fallback = true` when AskUserQuestion was unavailable OR the user dismissed without picking AND the orchestrator applied a documented default. In that case `chosen` reflects the applied default and `fallback_reason` explains why ("askuserquestion_unavailable" | "user_dismissed" | …).
 - Source-review gate is text-parsed, not AskUserQuestion (see Phase 7.5 in `skills/memo/SKILL.md` — Cowork issues #29773 family). `gate_name: "source-review"` fires with `was_fallback: false` on a clean `continue`/`cancel` reply; `was_fallback: true` with reason `"reprompt"` if the orchestrator re-showed the checkpoint due to an unparseable reply.
+- Sufficiency-followup gate (v0.6.3+) is the Phase 6.6 user-followup gate that fires conditionally when `research-sufficiency.json.overall_verdict == "targeted_followup_needed"` AND at least one `blocking_gap.target_agent == "main-session"`. It is rendered as a visualize elicitation widget when `visualize_enabled` (preferred path) or as text fallback otherwise. `gate_name: "sufficiency-followup"` `options_offered: ["letter-answers", "free-text", "proceed-on-defaults", "cancel"]`. `chosen` values: `"provided_facts"` (user answered via `followup: 1A 2C ...`), `"proceed-on-defaults"` (user typed `proceed`), `"cancel"`. A `gate_announced` event SHOULD also fire when the gate is first rendered (separate from `gate_answered` which fires when the user replies in the next turn). At most ONE Phase 6.6 gate per task — bounded by `attempts.research_followup`.
 - (Legacy `gate_name: "heartbeat"` events appear in audit logs of tasks created on v0.0.42 or earlier — accept on read, do not emit on write.)
 - (Legacy `gate_name: "revision-iter" | "revision-forced-exit" | "polish"` events appear in audit logs of tasks created on v0.0.43 or earlier — accept on read; new tasks emit `gate_auto_advanced` instead.)
 
@@ -279,6 +280,7 @@ After every `AskUserQuestion` resolution:
 - Phase 1.5 mode pick (`gate_name: mode-pick`) — AskUserQuestion
 - Phase 2a intake elicitation widget OR Phase 2b text parser (`gate_name: intake-elicitation`) — visualize widget + text parse
 - Phase 4a plan approval (`gate_name: plan-approval`) — AskUserQuestion; on `edit:` answer the gate is re-asked, so multiple `gate_answered` events may fire for the same task
+- Phase 6.6 sufficiency follow-up (`gate_name: sufficiency-followup`, v0.6.3+) — visualize widget + text parse (`followup: 1A 2C 3:my answer` / `proceed` / `cancel`); fires conditionally when sufficiency reviewer returns `targeted_followup_needed` with at least one `main-session` blocking_gap; bounded to one-per-task by `attempts.research_followup`. A paired `gate_announced` event fires when the gate is first rendered.
 - Phase 7.5 source-review (`gate_name: source-review`) — text-parsed `continue` / `cancel`, NOT AskUserQuestion (per v0.0.43 Cowork end-of-turn flush design)
 - (Phase 9.6b iteration gate, Phase 9.6c forced-exit gate, Phase 10 polish gate were removed in v0.0.44 — they fire `gate_auto_advanced` instead, see below.)
 

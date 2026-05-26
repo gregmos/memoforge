@@ -1,7 +1,7 @@
 ---
 name: continue
-description: Resume an interrupted legal memo task. Use only when explicitly invoked via /legal-memo-writer:continue with the task_id, optionally followed by one of answer, proceed, approve, cancel, or edit.
-argument-hint: "<task_id> [answer: <facts>|proceed|approve|cancel|edit: <instructions>]"
+description: Resume an interrupted legal memo task. Use only when explicitly invoked via /legal-memo-writer:continue with the task_id, optionally followed by one of answer, followup, proceed, approve, cancel, or edit.
+argument-hint: "<task_id> [answer: <facts>|followup: <answers>|proceed|approve|continue|cancel|edit: <instructions>]"
 disable-model-invocation: true
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Task, AskUserQuestion, WebFetch, WebSearch, mcp__*, mcp__plugin_legal-memo-writer_courtlistener__*, mcp__plugin_legal-memo-writer_legal-data-hunter__*
 ---
@@ -175,7 +175,7 @@ Per-phase key files mapping — use this list inside `Notes:` (as plain text, no
 | planning                                            | state.json, intake/user-facts.md                                                               |
 | plan_approval_pending                               | state.json, plan.md, checkpoints/plan-approval.md                                              |
 | research                                            | state.json, plan.md, research/ (folder)                                                        |
-| research_sufficiency / currency_check / source_pack / source_review_pending (or legacy `heartbeat_pending`) | state.json, research/source-pack.md (if exists), research/ (folder)                            |
+| research_sufficiency / research_sufficiency_followup_pending / currency_check / source_pack / source_review_pending (or legacy `heartbeat_pending`) | state.json, research/research-sufficiency.json, research/followup-response.md (if Phase 6.6 fired), research/source-pack.md (if exists), research/ (folder), $WORK_DIR/widgets/phase66-followup-elicitation.html (if Phase 6.6 fired with visualize) |
 | drafting                                            | state.json, drafts/v\<latest\>.md                                                              |
 | revision_loop                                       | state.json, drafts/v\<N\>.md, reviews/v\<N\>-mediator.md                                       |
 | client_readiness                                    | state.json, drafts/v\<final\>.md, reviews/client-readiness.md                                  |
@@ -199,6 +199,7 @@ Use this mapping `current_phase → TodoWrite snapshot`. Items #1–#14 follow t
 | plan_approval_pending        | #1, #2, #3                                 | #4 Plan approval                             | #5–#14 |
 | research                     | #1–#4                                      | #5 Parallel research (+ sub-items per researcher in `state.json.dispatched_researchers`, each `in_progress`) | #6–#14 |
 | research_sufficiency         | #1–#5 (+ Phase 5 sub-items completed)      | #6 Research sufficiency review               | #7–#14 |
+| research_sufficiency_followup_pending | #1–#5 (+ sub-items)               | #6 Research sufficiency review (activeForm: `"Awaiting follow-up answers from user"`) | #7–#14 |
 | currency_check               | #1–#6 (+ sub-items)                        | #7 Currency check                            | #8–#14 |
 | source_pack                  | #1–#7 (+ sub-items)                        | #8 Source pack assembly                      | #9–#14 |
 | source_review_pending (or legacy `heartbeat_pending`) | #1–#8 (+ sub-items)                        | #9 Source review                             | #10–#14 |
@@ -401,6 +402,64 @@ If verdict is `targeted_followup_needed`, check `state.json.attempts.research_fo
 - If `>= 1` and `attempts.research_followup_pending_review = false`, do NOT re-dispatch follow-up. Treat remaining gaps as either `insufficient_for_client_ready_memo` or explicit drafting warnings.
 
 If verdict is `insufficient_for_client_ready_memo`, either fail with a clear reason or continue only with explicit drafting warnings recorded. Then run `currency-checker` if `research/currency-report.json` is missing: before dispatching it, set `current_phase = currency_check`; after it writes `research/currency-report.md` + `research/currency-report.json`, fall through to the `currency_check` branch's re-gate logic below.
+
+**Subset U / Subset R partitioning on resume.** When this branch processes a fresh `targeted_followup_needed` verdict (Branch B6a/B6b from `skills/memo/SKILL.md` Phase 6 logic) — i.e. `attempts.research_followup == 0` and the sufficiency JSON has Subset U entries — DO NOT auto-dispatch researchers as the legacy logic implied. Instead, mirror memo SKILL.md Phase 6 Branch B6a: transition to `research_sufficiency_followup_pending` and render the Phase 6.6 user-followup gate (visualize widget or text fallback). See the next branch (`research_sufficiency_followup_pending`) for the gate procedure. The "increment `attempts.research_followup` to 1" step is delayed to the resume of the gate (Phase 6.6 user replied), not done here on entry. This keeps the budget honest: the user-followup gate fires AT MOST once per task regardless of how many times /continue is invoked at sufficiency.
+
+### `research_sufficiency_followup_pending`
+
+This phase is entered when memo SKILL.md Phase 6 (or this skill's `research_sufficiency` branch) detected sufficiency verdict `targeted_followup_needed` with at least one `blocking_gap.target_agent == "main-session"` AND `attempts.research_followup == 0`. State has been written: `current_phase = "research_sufficiency_followup_pending"`, `attempts.research_followup = 1`, `attempts.research_followup_pending_review = true`, and `state.json.sufficiency_followup.{questions, subset_r, status: "questions_pending"}` populated.
+
+Three sub-paths, evaluated in order:
+
+**Sub-path 1 — Explicit response in `$ARGUMENTS` (recovery / power-user / cross-session).** If the text after `task_id` starts with one of the accepted keywords, handle immediately:
+
+- `followup:` / `followup ` / bare letter sequence (e.g. `1A 2C 3:my free text`) → parse the answers against `state.json.sufficiency_followup.questions`. Mirror the Parser 1 logic from `skills/memo/SKILL.md` Phase 2b (lines around 497-507):
+  - For each `<n><L>` token: look up question `n`, look up option with `letter == L`, record `{question_text: option_label}` AND copy the `default_assumption_if_skipped` is NOT applied (user picked an explicit option).
+  - For each `<n>:<text>` token: record `{question_text: text}` as a free-text answer.
+  - For any question with NO token in the user's reply: apply the corresponding `default_assumption_if_skipped` from that question's `followup_question` block. Mark it in the audit as `default-applied`.
+  - Write to TWO files (audit + downstream-readable):
+    - **Append** to `intake/user-facts.md` under a NEW section `## Follow-up answers (after sufficiency review — <ISO timestamp>)`, formatted same as the existing intake user-facts.md sections (`### Q<n>: <text>` + `**Answer:** <option label | free-text | default-applied: <text>>`).
+    - **Write** a structured audit file `research/followup-response.md` containing the same Q/A pairs in machine-friendly format (used by re-dispatched researchers as additional context).
+  - Atomically update state.json:
+    - `sufficiency_followup.user_response = <parsed map>`
+    - `sufficiency_followup.answered_at = "<NOW_ISO>"`
+    - `sufficiency_followup.status = "answered"`
+    - If `sufficiency_followup.subset_r` is empty: `current_phase = "research_sufficiency"` (re-run sufficiency directly with enriched user-facts).
+    - If `sufficiency_followup.subset_r` is non-empty: `current_phase = "research"` (re-dispatch researchers first, then sufficiency).
+  - Emit `gate_answered` event with `gate_name: "sufficiency-followup"`, `chosen: "provided_facts"`, `options_offered: ["letter-answers", "free-text", "proceed-on-defaults", "cancel"]`, `was_fallback: false`.
+  - Emit `phase_transition` event for the new `current_phase`.
+  - **Dispatch branch:**
+    - If `subset_r` is empty: re-dispatch `research-sufficiency-reviewer` directly (no researcher re-dispatch needed — user supplied the missing facts; pass updated `intake/user-facts.md` so the reviewer sees the new context). After it returns, set `attempts.research_followup_pending_review = false` and fall through to the standard `research_sufficiency` branch.
+    - If `subset_r` is non-empty: re-dispatch each researcher listed in `subset_r` with its corresponding `recommended_followup_prompt` AND pass the updated `intake/user-facts.md` as additional input. After researchers return, dispatch `research-sufficiency-reviewer`, then set `attempts.research_followup_pending_review = false`, fall through to standard `research_sufficiency` branch.
+
+- `proceed` / `assume` → user explicitly skipped all follow-up questions; apply every `default_assumption_if_skipped` from Subset U.
+  - Write the defaults to `intake/user-facts.md` under `## Follow-up answers (after sufficiency review — user accepted defaults at <ISO>)`.
+  - Write `research/followup-response.md` recording "User accepted defaults" plus the applied assumptions.
+  - Atomically update state.json same as the `followup:` path: `sufficiency_followup.status = "skipped_defaults"`, `user_response = {"_proceed": true}`, `answered_at = <NOW>`, `current_phase = "research"` or `"research_sufficiency"` based on `subset_r`.
+  - Emit `gate_answered` event with `chosen: "proceed-on-defaults"`.
+  - Continue with the same dispatch branch as the `followup:` path.
+
+- `cancel` → set `current_phase = cancelled_by_user`, emit `gate_answered` with `chosen: "cancel"`, print confirmation, end turn.
+
+**Sub-path 2 — Bare `/continue <task_id>` and last user message contains a valid keyword** (backward-compatible plain-text recovery). If `$ARGUMENTS` after task_id is empty but the user's previous chat message starts with `followup:` / `followup ` / `proceed` / `cancel` / a bare letter sequence, treat that message as the response and run the same handlers as Sub-path 1.
+
+**Sub-path 3 — Bare `/continue <task_id>` and no parseable response** (re-show the gate).
+
+Read `state.json.sufficiency_followup.questions`. Re-render the follow-up gate:
+
+- **Path A** (`state.json.config.visualize_enabled == true`) — re-render the elicitation widget per `skills/memo/references/widget-schemas.md §Sufficiency follow-up` (same payload as the original Phase 6.6 render — read `sufficiency_followup.questions` for the questions, same letter-labeled options). Save snapshot to `$WORK_DIR/widgets/phase66-followup-elicitation.html` (overwrites prior). Append `visualize_widget_rendered` event with `{"phase": "6.6-followup-resume", "module": "elicitation", "question_count": <len(questions)>}`. Print the same framing message as memo SKILL.md Phase 6 Branch B6a step 4, but with a resume preamble:
+  ```
+  Resuming task `<task_id>` at the sufficiency follow-up gate. <N> fact(s) still need answers before drafting.
+  ```
+  Then the same answer-format instructions. End turn.
+
+- **Path B** (`visualize_enabled == false` OR Path A throws) — re-print the text fallback from memo SKILL.md Phase 6 Branch B6a step 5, with the resume preamble above. End turn.
+
+Do NOT count this re-show against `attempts.research_followup` — that was already incremented atomically when Phase 6.6 first fired.
+
+**Anti-loop guard:** if a user has typed `/legal-memo-writer:continue <task_id>` 3+ times in a row without sending followup/proceed/cancel between them, print:
+> I see several `/legal-memo-writer:continue` calls in a row without a follow-up response. Please use one of: `/legal-memo-writer:continue <task_id> followup: 1A 2C 3:my answer`, `/legal-memo-writer:continue <task_id> proceed`, or `/legal-memo-writer:continue <task_id> cancel`.
+And end turn.
 
 ### `currency_check`
 

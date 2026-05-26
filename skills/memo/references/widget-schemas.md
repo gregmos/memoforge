@@ -40,6 +40,37 @@ Built from `checkpoints/intake-questions.json` after sanitization (header ≤12 
 
 Emit `visualize_widget_rendered` event with `{"phase": "2a-elicitation", "module": "elicitation", "question_count": <N+M>}`.
 
+## §Sufficiency follow-up (Phase 6.6, v0.6.3+)
+
+Reuses the §Elicitation HTML layout and `elicitation` module guidelines verbatim — same widget code shape, different data source. Built from `state.json.sufficiency_followup.questions` (mirror of `research-sufficiency.json.blocking_gaps[].followup_question` entries for `target_agent: "main-session"` gaps), after the same sanitization rules as §Elicitation (header ≤12 chars, options 2..4, descriptions ≤200 chars). Letter-label each option (A/B/C/D in order).
+
+Difference from §Elicitation: there is no `must_answer` / `optional` partition (all follow-up questions are conceptually must-answer — they were generated specifically because the sufficiency reviewer flagged them as blocking — but skipping is permitted by accepting the `default_assumption_if_skipped`, same as intake). All questions render in a single `must_answer` section with `n` starting at 1.
+
+```json
+{
+  "task_id": "<id>",
+  "framing": "Research surfaced <N> fact(s) the analysis still needs from you before drafting can proceed. Skipping a question applies a conservative default assumption.",
+  "must_answer_count": <N>,
+  "optional_count": 0,
+  "questions": [
+    {"n": 1, "section": "must_answer", "text": "<question>", "options": [{"letter": "A", "label": "...", "description": "..."}, ...], "rationale": "<rationale_md>"},
+    ...
+  ],
+  "default_assumptions_if_skipped": ["<default for Q1>", "<default for Q2>", ...]
+}
+```
+
+`show_widget` call arguments:
+- `title`: `"Research follow-up — answer in chat below"`.
+- `loading_messages`: `["Preparing follow-up card...", "Rendering questions..."]`.
+- `widget_code`: the generated HTML (≤40KB, no JavaScript callbacks; the SAME widget HTML template as §Elicitation — only the data payload differs).
+
+Snapshot path: `$WORK_DIR/widgets/phase66-followup-elicitation.html` (overwritten on resume re-show via continue/SKILL.md §`research_sufficiency_followup_pending` Sub-path 3).
+
+Emit `visualize_widget_rendered` event with `{"phase": "6.6-followup", "module": "elicitation", "question_count": <N>}`. On resume re-show, use `"phase": "6.6-followup-resume"` instead.
+
+User reply parsing follows the same syntax as §Elicitation: `1A 2C 3:my free text` (letter answer per question, with `<n>:custom text` escape for free-form). The `proceed` shortcut accepts ALL `default_assumption_if_skipped` values at once. The `cancel` shortcut stops the pipeline cleanly. See `skills/memo/SKILL.md` Phase 6 Branch B6a framing-message template for the exact instructions printed alongside the widget.
+
 ## §Mode mockup (Phase 1.5)
 
 Compact 2-column comparison of Brief / Full modes. Source of truth for the values: `references/modes.md` mode matrix — keep this payload in sync with that file when modes evolve.

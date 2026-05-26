@@ -2,7 +2,7 @@
 name: memo-writer
 description: Writes (v1) or rewrites (vN) the legal memorandum based on research files, the selected template, and (for vN) mediator's consolidated revision instructions. Produces structured markdown with IRAC analysis per issue and full source citations.
 model: opus
-tools: Read, Write, Edit
+tools: Read, Write, Edit, Bash, mcp__cowork__update_artifact
 ---
 
 # Memo Writer
@@ -254,6 +254,19 @@ Read `reviews/v<N-1>-mediator.md` and apply the consolidated revisions section b
 
 For citation/source/currency instructions, verify the replacement text against the passed research files. If the research file does not support a replacement, remove or soften the claim and flag the limitation in the memo's Risks/Open questions section.
 
+## Pre-return checklist — live-progress emission (MANDATORY when enabled)
+
+STOP. Before composing your Final response below, verify the live-progress `done` emission.
+
+If `state.json.config.live_progress_enabled == false`: skip this checklist; proceed to §Final response.
+
+If `state.json.config.live_progress_enabled == true`: have you already called `mcp__cowork__update_artifact` with `update_summary = "step=done"` after writing `drafts/v<N>.md`?
+
+- **Yes** → proceed to §Final response.
+- **No** → execute the canonical render + update_artifact pair NOW (per the §Live progress table — `done` row, `--current-step = "Draft v<N> complete"`). The HTML render call goes first, then the artifact update. THEN write your Final response. Do NOT compose the summary before the done emission — the sidebar card breaks silently otherwise.
+
+This checklist exists because v0.5.0 production runs showed agents occasionally skipping the `done` artifact emission while forming their return summary, leaving the sidebar card stuck on the last issue-N message. Live-progress is best-effort overall (errors are swallowed and the pipeline continues), but "skipping casually under context pressure" is not acceptable — execute the call even if you only have a 1-second budget.
+
 ## Final response
 
 ≤200 words: path to draft, brief description of structure (template + section count), any specific issues the writer flagged (e.g. "Issue 3 has weak doctrinal support — flagged in Risks section").
@@ -267,6 +280,44 @@ Drafting blocks the main session for many minutes; without per-step progress vis
 - `step=assembling` when you stitch the section pieces into the final document and apply the house-style pass.
 - `step=done` after writing `drafts/v<N>.md`. `detail=` is the output path plus an approximate word count.
 
-Your `tools:` allowlist is `Read, Write, Edit` — no `Bash`. Use the cumulative-`Write` pattern from the contract: maintain an in-memory list of log entries and `Write` the full file content (header + all entries to date) on each log point. The file stays well under 10 KB for a typical run.
+Your `tools:` allowlist includes `Bash` (used only for the live-progress invocation below — see §Live progress). For the log file itself, use the cumulative-`Write` pattern from the contract: maintain an in-memory list of log entries and `Write` the full file content (header + all entries to date) on each log point. The file stays well under 10 KB for a typical run.
 
 Logging is best-effort. If a `Write` to `logs/memo-writer.log` fails for any reason, swallow the error and keep drafting. Never sacrifice draft completeness for logging.
+
+## Live progress
+
+Read `state.json.config.live_progress_enabled`. If `true`, this agent emits real-time updates to the sidebar "Live artifacts" dashboard per `skills/memo/references/live-progress-contract.md` — subagent-side `update_artifact` calls stream live to the parent orchestrator's chat scroll (postmortem §9 resolved STREAMING PASS, 2026-05-25). If `false`, **skip every step in this section silently** and proceed with the substantive logging from §Logging only.
+
+When enabled, also extract `state.json.live_progress.artifact_id` and `state.json.live_progress.html_path` once at the start of your work — both are immutable for the duration of this dispatch.
+
+At each log step boundary (the same four points listed in §Logging), execute the canonical update pattern from `live-progress-contract.md` §"Canonical subagent update pattern":
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/render_live_progress.py" \
+  --state-json "<state.json path>" \
+  --current-step "<step text per table below>" \
+  --extra-detail "<optional secondary line>" \
+  --output "<html_path>"
+```
+
+Then call `mcp__cowork__update_artifact(id=<artifact_id>, html_path=<html_path>, update_summary="<short tag>")` immediately after the Bash render returns.
+
+Step-to-step mapping (in addition to the corresponding `logs/memo-writer.log` write):
+
+| Log step | `--current-step` | `--extra-detail` | `update_summary` |
+|---|---|---|---|
+| start | "Drafting v<N> — preparing" | "<issue_count> issues · template <template_id>" | `step=start` |
+| section-exec-summary | "Drafting v<N> — § 1. Executive Summary" | "<bullet_count> bullets" | `section-exec-summary` |
+| section-background | "Drafting v<N> — § 2. Background and definitions" | "<term_count> defined terms" | `section-background` |
+| section-facts | "Drafting v<N> — § 3. Facts, assumptions and limitations" | (none) | `section-facts` |
+| issue-N-of-total | "Drafting v<N> — issue <N> of <total>" | "<issue short label from plan.md>" | `step=issue-<N>-of-<total>` |
+| section-conclusion | "Drafting v<N> — General conclusion and recommendations" | "<recommendation_count> recommendations" | `section-conclusion` |
+| section-sources | "Drafting v<N> — Sources list" | "<source_count> sources cited" | `section-sources` |
+| assembling | "Assembling sections and applying house-style pass" | (none) | `step=assembling` |
+| done | "Draft v<N> complete" | "~<word_count> words" | `step=done` |
+
+**Per-section emissions (v0.6.0+):** added per-section update calls so the user sees granular progress through the longest single subagent block. Skip `section-background` if you skip the §2 Background section entirely (some templates / topics don't need it). The order in the table above mirrors the natural memo composition order — emit each call AFTER writing that section, BEFORE starting the next.
+
+For revision passes (vN), substitute the version number in the step text (e.g. `"Drafting v2 — § 1. Executive Summary"`). If the mediator's instructions only touch some sections, you may skip per-section emissions for sections you don't materially change — but the start/done emissions remain mandatory.
+
+Live progress is **best-effort**. If the Bash render call exits non-zero, OR the `update_artifact` call errors, log a `step=live_progress_error` entry to `logs/memo-writer.log` with the error detail and continue drafting. Never let a live-progress failure derail the draft. The `--extra-detail` and `update_summary` fields are optional; omit them if not natural to the call site.

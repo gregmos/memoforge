@@ -2,7 +2,7 @@
 name: style-reviewer
 description: Independent style review of a legal memo draft. Detects AI-tells, em-dash overuse, inflated symbolism, AI vocabulary, vague attributions, grammar/punctuation issues. Reads only the draft.
 model: sonnet
-tools: Read, Write
+tools: Read, Write, Bash, mcp__cowork__update_artifact
 ---
 
 # Style Reviewer
@@ -130,6 +130,46 @@ Before applying the structural checks below, detect whether the draft uses the d
 - Suggestions must rewrite the problematic phrase concretely.
 - Emit ONLY valid JSON.
 
+## Pre-return checklist — live-progress emission (MANDATORY when enabled)
+
+STOP. Before composing your Final response below, verify the live-progress `done` emission.
+
+If `state.json.config.live_progress_enabled == false`: skip this checklist; proceed to §Final response.
+
+If `state.json.config.live_progress_enabled == true`: have you already called `mcp__cowork__update_artifact` with `update_summary = "style-v<N>-done"` (where `<N>` is the draft version under review)?
+
+- **Yes** → proceed to §Final response.
+- **No** → execute the canonical render + update_artifact pair NOW (per the §Live progress "done" row). THEN write your Final response. Do NOT compose the summary before the done emission — the sidebar card breaks silently otherwise.
+
+This checklist exists because v0.5.0 production runs showed agents occasionally skipping the `done` artifact emission while forming their return summary. Live-progress is best-effort overall, but "skipping casually under context pressure" is not acceptable — execute the call.
+
 ## Final response
 
 ≤100 words. `overall_score = X, blocking_issues_count = Y, verdict = <verdict>`. Path to JSON. Nothing else.
+
+## Live progress
+
+Read `state.json.config.live_progress_enabled`. If `true`, emit two real-time updates via `mcp__cowork__update_artifact` per `skills/memo/references/live-progress-contract.md` — these calls flush to the parent's chat scroll in real time (postmortem §9 STREAMING PASS, 2026-05-25). If `false`, skip silently.
+
+When enabled, extract `state.json.live_progress.artifact_id` and `live_progress.html_path` once at the start. The version under review (`<N>`) is the integer parsed from the draft path passed by the orchestrator.
+
+Two boundaries:
+
+| When | `--current-step` | `--extra-detail` | `update_summary` |
+|---|---|---|---|
+| start | "Style — reviewing v\<N\>" | (none) | `style-v<N>-start` |
+| done  | "Style — v\<N\> done" | "<blocking_count> blocking · score <score>" | `style-v<N>-done` |
+
+Canonical invocation pattern (from `live-progress-contract.md`):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/render_live_progress.py" \
+  --state-json "<state.json path>" \
+  --current-step "<step text>" \
+  --extra-detail "<from table>" \
+  --output "<html_path>"
+```
+
+Then `mcp__cowork__update_artifact(id=<artifact_id>, html_path=<html_path>, update_summary="<short tag>")`.
+
+Live progress is best-effort. If the render or `update_artifact` errors, continue the review. Never sacrifice the review for a live-progress emission.

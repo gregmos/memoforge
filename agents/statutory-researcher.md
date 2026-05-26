@@ -210,6 +210,19 @@ Never silently drop a hit. The sufficiency-reviewer reads this section to verify
 - For broad queries returning many hits: read top-7 by relevance, evaluate each. Bring the relevant ones into the analyzed layer with appropriate tier. List the rest under "Considered but excluded" with a reason.
 - Do not try to iterate through every hit. Pick well, justify the picks.
 
+## Pre-return checklist — live-progress emission (MANDATORY when enabled)
+
+STOP. Before composing your Final response below, verify the live-progress `done` emission.
+
+If `state.json.config.live_progress_enabled == false`: skip this checklist; proceed to §Final response.
+
+If `state.json.config.live_progress_enabled == true`: have you already called `mcp__cowork__update_artifact` with `update_summary = "statutes-done"` for this dispatch?
+
+- **Yes** → proceed to §Final response.
+- **No** → execute the canonical render + update_artifact pair NOW (per the §Logging "done" row and the §Live progress table). The HTML render call goes first, then the artifact update. THEN write your Final response. Do NOT compose the summary before the done emission — the sidebar card breaks silently otherwise.
+
+This checklist exists because v0.5.0 production runs showed researchers occasionally skipping the `done` artifact emission while forming their return summary, leaving the sidebar card stuck on the last issue-N message. Live-progress is best-effort overall (errors are swallowed and the pipeline continues), but "skipping casually under context pressure" is not acceptable — execute the call even if you only have a 1-second budget.
+
 ## Final response to main session
 
 Keep your text response **≤200 words**. Include:
@@ -238,3 +251,33 @@ printf "%sZ step=%s detail=%s\n" "$(date -u +%Y-%m-%dT%H:%M:%S)" "<step>" "<deta
 ```
 
 Logging is best-effort. If a log write fails, swallow the error and continue research.
+
+## Live progress
+
+Read `state.json.config.live_progress_enabled`. If `true`, emit real-time updates to the sidebar dashboard per `skills/memo/references/live-progress-contract.md`. These calls flush to the parent orchestrator's chat scroll in real time (postmortem §9 resolved STREAMING PASS, 2026-05-25), giving the user visibility into the otherwise-silent Phase 5 parallel research block. If `false`, skip every step in this section silently.
+
+When enabled, extract `state.json.live_progress.artifact_id` and `state.json.live_progress.html_path` once at the start of your work — both immutable for this dispatch.
+
+Emit updates at THREE step boundaries only (NOT at every `step=search-<short>` — that would flood the chat with 10–20 strips per researcher; per-issue cadence is the right granularity):
+
+| Log step | `--current-step` | `--extra-detail` | `update_summary` |
+|---|---|---|---|
+| start | "Statutes — preparing" | "<issue_count> issues · <jurisdictions> · MCP routes: <ldh\|web>" | `statutes-start` |
+| issue-N-of-total | "Statutes — issue <N> of <total>" | "<issue short label> · <primary jurisdiction>" | `statutes-issue-<N>` |
+| done | "Statutes — done" | "<source_count> sources · <gap_count> gaps" | `statutes-done` |
+
+The canonical update pattern from `live-progress-contract.md` §"Canonical subagent update pattern" applies. Concrete invocation for this researcher:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/render_live_progress.py" \
+  --state-json "<state.json path>" \
+  --current-step "<step text per table above>" \
+  --extra-detail "<from table>" \
+  --output "<html_path>"
+```
+
+Then `mcp__cowork__update_artifact(id=<artifact_id>, html_path=<html_path>, update_summary="<short tag>")`.
+
+**Concurrency note.** Phase 5 dispatches `statutory-researcher`, `case-law-researcher`, and `doctrinal-researcher` in parallel. All three update the SAME master artifact via the SAME `html_path`. The renderer's atomic `.tmp` + rename prevents torn HTML. The user sees the sidebar card alternate between the three researchers' current-step messages — that visible alternation IS the live signal that parallel research is running. Last-writer-wins is acceptable.
+
+Live progress is best-effort. If the Bash render fails or `update_artifact` errors, log `step=live_progress_error` to `logs/statutory-researcher.log` with the error and continue research. Never sacrifice research completeness for live-progress emissions.

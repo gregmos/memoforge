@@ -179,6 +179,19 @@ Never silently drop a hit. The sufficiency-reviewer reads this section to verify
 - For broad queries returning many hits: read top-7 by relevance, evaluate each. Bring the relevant ones into the analyzed layer with appropriate tier. List the rest under "Considered but excluded" with a reason.
 - Do not try to iterate through every hit. Pick well, justify the picks.
 
+## Pre-return checklist — live-progress emission (MANDATORY when enabled)
+
+STOP. Before composing your Final response below, verify the live-progress `done` emission.
+
+If `state.json.config.live_progress_enabled == false`: skip this checklist; proceed to §Final response.
+
+If `state.json.config.live_progress_enabled == true`: have you already called `mcp__cowork__update_artifact` with `update_summary = "doctrine-done"` for this dispatch?
+
+- **Yes** → proceed to §Final response.
+- **No** → execute the canonical render + update_artifact pair NOW (per the §Logging "done" row and the §Live progress table). The HTML render call goes first, then the artifact update. THEN write your Final response. Do NOT compose the summary before the done emission — the sidebar card breaks silently otherwise.
+
+This checklist exists because v0.5.0 production runs showed researchers occasionally skipping the `done` artifact emission while forming their return summary, leaving the sidebar card stuck on the last issue-N message. Live-progress is best-effort overall (errors are swallowed and the pipeline continues), but "skipping casually under context pressure" is not acceptable — execute the call even if you only have a 1-second budget.
+
 ## Final response
 
 ≤200 words: one-line summary, file path, 3-5 key doctrinal items with issuing body.
@@ -201,3 +214,33 @@ printf "%sZ step=%s detail=%s\n" "$(date -u +%Y-%m-%dT%H:%M:%S)" "<step>" "<deta
 ```
 
 Logging is best-effort. If a log write fails, swallow the error and continue research.
+
+## Live progress
+
+Read `state.json.config.live_progress_enabled`. If `true`, emit real-time updates to the sidebar dashboard per `skills/memo/references/live-progress-contract.md`. These calls flush to the parent's chat scroll in real time (postmortem §9 STREAMING PASS, 2026-05-25). If `false`, skip every step in this section silently.
+
+When enabled, extract `state.json.live_progress.artifact_id` and `state.json.live_progress.html_path` once at the start of your work.
+
+Emit updates at THREE step boundaries (per-issue cadence — NOT per-search; doctrinal does many fetches per issue across EDPB/DPAs/academic, which would flood chat):
+
+| Log step | `--current-step` | `--extra-detail` | `update_summary` |
+|---|---|---|---|
+| start | "Doctrine — preparing" | "<issue_count> issues · authorities: EDPB/DPA/academic" | `doctrine-start` |
+| issue-N-of-total | "Doctrine — issue <N> of <total>" | "<issue short label> · <primary issuing body>" | `doctrine-issue-<N>` |
+| done | "Doctrine — done" | "<item_count> items · soft-law/academic split: <S>/<A>" | `doctrine-done` |
+
+Canonical invocation pattern (from `live-progress-contract.md`):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/render_live_progress.py" \
+  --state-json "<state.json path>" \
+  --current-step "<step text>" \
+  --extra-detail "<from table>" \
+  --output "<html_path>"
+```
+
+Then `mcp__cowork__update_artifact(id=<artifact_id>, html_path=<html_path>, update_summary="<short tag>")`.
+
+**Concurrency note.** Phase 5 runs doctrinal in parallel with statutory and case-law (when `plan.doctrine_required == yes`). All three write the same `html_path` — atomic .tmp + rename prevents torn writes; last-writer-wins on the card is acceptable.
+
+Live progress is best-effort. If the render or `update_artifact` errors, log `step=live_progress_error` and continue research. Never sacrifice research completeness for live-progress emissions.

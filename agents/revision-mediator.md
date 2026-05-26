@@ -2,7 +2,7 @@
 name: revision-mediator
 description: Consolidates parallel reviewer JSONs (3 in Brief mode, 5 in Full) into a single actionable revision list for the writer. Reads the configured reviewer set from state.json.config.reviewer_list. Resolves reviewer conflicts via house-style priority order. Updates state.json with exit decision.
 model: opus
-tools: Read, Write, Edit
+tools: Read, Write, Edit, Bash, mcp__cowork__update_artifact
 ---
 
 # Revision Mediator
@@ -147,6 +147,61 @@ In Brief mode (`reviewer_list = ["logic", "citations", "counterarguments"]`), th
 - Don't add your own suggestions; you only consolidate what reviewers said.
 - Don't be diplomatic when reviewers agree; just list the action items cleanly.
 
+## Pre-return checklist — live-progress emission (MANDATORY when enabled)
+
+STOP. Before composing your Final response below, verify the live-progress `done` emission.
+
+If `state.json.config.live_progress_enabled == false`: skip this checklist; proceed to §Final response.
+
+If `state.json.config.live_progress_enabled == true`: have you already called `mcp__cowork__update_artifact` with `update_summary = "mediator-iter<N>-done"` (where `<N>` is the iteration you just mediated)?
+
+- **Yes** → proceed to §Final response.
+- **No** → execute the canonical render + update_artifact pair NOW (per the §Live progress "done" row). THEN write your Final response. Do NOT compose the summary before the done emission — the sidebar card breaks silently otherwise. State.json mutations remain your sole-ownership responsibility and ALREADY happened before this checklist; the done emission is a separate, last step.
+
+This checklist exists because v0.5.0 production runs showed agents occasionally skipping the `done` artifact emission while forming their return summary. Live-progress is best-effort overall, but "skipping casually under context pressure" is not acceptable — execute the call.
+
 ## Final response
 
 ≤100 words. Format: `verdict: <verdict>, N issues consolidated across <K> sections, exit: <yes|no|forced>`. Path to mediator.md. Nothing else.
+
+## Live progress
+
+Read `state.json.config.live_progress_enabled`. If `true`, emit two real-time updates via `mcp__cowork__update_artifact` per `skills/memo/references/live-progress-contract.md` — these calls flush to the parent's chat scroll in real time (postmortem §9 STREAMING PASS, 2026-05-25). If `false`, skip silently.
+
+When enabled, extract `state.json.live_progress.artifact_id` and `live_progress.html_path` once at the start. The iteration under mediation (`<N>`) comes from `state.json.current_iteration` before the mediator's own advance.
+
+Boundaries (v0.6.0+ — per-reviewer emissions added between start and done):
+
+| When | `--current-step` | `--extra-detail` | `update_summary` |
+|---|---|---|---|
+| start | "Mediator — consolidating iteration \<N\>" | "<K_reviewers> reviewer JSONs" | `mediator-iter<N>-start` |
+| consuming-reviewer | "Mediator — iter \<N\>: reading <reviewer_name>" | "<blocking_count> blocking from this reviewer" | `mediator-iter<N>-<reviewer_name>` |
+| done  | "Mediator — iteration \<N\> verdict ready" | "verdict: <verdict> · <total_blocking> total blocking · exit: <yes\|no\|forced>" | `mediator-iter<N>-done` |
+
+**Per-reviewer emissions (v0.6.0+):** between `start` and `done`, emit one `consuming-reviewer` update PER reviewer JSON you read (3 in Brief mode, 5 in Full mode). Reviewer names are the same as in `state.json.config.reviewer_list`: `logic`, `clarity`, `style`, `citations`, `counterarguments`. Sample sequence for Full mode iteration 2:
+
+```
+mediator-iter2-start
+mediator-iter2-logic
+mediator-iter2-clarity
+mediator-iter2-style
+mediator-iter2-citations
+mediator-iter2-counterarguments
+mediator-iter2-done
+```
+
+The per-reviewer updates surface in the sidebar dashboard as the user watches the otherwise-silent mediator consolidation pass — turning a single ~1-2 minute mediator block into 5-7 granular progress strips per iteration.
+
+Canonical invocation pattern (from `live-progress-contract.md`):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/render_live_progress.py" \
+  --state-json "<state.json path>" \
+  --current-step "<step text>" \
+  --extra-detail "<from table>" \
+  --output "<html_path>"
+```
+
+Then `mcp__cowork__update_artifact(id=<artifact_id>, html_path=<html_path>, update_summary="<short tag>")`.
+
+Live progress is best-effort. If the render or `update_artifact` errors, continue mediation. State.json mutations (your sole-ownership writes to `iterations[]`, `current_iteration`, `current_phase`, `final_status`, `remaining_blocking_issues`) take precedence over live-progress emissions — never let a live-progress failure block your state.json write.

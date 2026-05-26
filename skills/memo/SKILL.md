@@ -95,12 +95,14 @@ The pipeline must keep source discovery narrow and auditable. Canonical policy l
 ## Phase 1 — Initialize task & preliminary intake
 
 **Order of steps in this phase:**
-1. **Task setup** — resolve work_dir, mkdir, initialize `state.json` with `config: {}`, create `events.jsonl`. This MUST happen first because the precheck steps below write events and `state.json.config.visualize_*` keys.
+1. **Task setup** — resolve work_dir, mkdir, initialize `state.json`, create `events.jsonl`, AND mint the live-progress master artifact. Sub-steps 1a→1e. This MUST happen first because the precheck steps below write events and `state.json.config.*` keys, and because the live-progress mint must happen BEFORE any subagent dispatch.
 2. **MCP availability precheck** — detect Legal Data Hunter / CourtListener namespaces, record results, append `mcp_precheck_result` event, push fallback banner if MCP missing.
 3. **Visualize widget precheck** — detect `visualize` namespace, write `state.json.config.visualize_enabled` and `visualize_namespace`, append `visualize_precheck_result` event.
 4. **Dispatch `fact-assumption-analyst`** — preliminary triage to generate intake questions.
 
-The Phase 1.5 mode pick happens later (after Phase 2 intake completes); the visualize-enabled flag set here is read by Phase 1.5 to decide widget vs text fallback. Phase 1.5 MERGES mode config into `state.json.config` and MUST preserve visualize_* keys.
+The Phase 1.5 mode pick happens later (after Phase 2 intake completes); the visualize-enabled and live-progress-enabled flags set here are read by Phase 1.5 to decide widget vs text fallback. Phase 1.5 MERGES mode config into `state.json.config` and MUST preserve `visualize_*` and `live_progress_enabled` keys.
+
+> **v0.5.6 restructure:** prior versions placed the live-progress mint at step 3.5 (between Visualize precheck and fact-assumption-analyst dispatch). Empirical observation showed orchestrators reliably skipping that separate step. As of v0.5.6 the mint is part of Step 1 (Task setup) — bundled with state.json init and events.jsonl creation, which orchestrators never skip. See sub-step 1d below.
 
 ### Task setup (step 1)
 
@@ -174,13 +176,93 @@ Initialize `state.json` with:
     "reviewer_json_retry": {}
   },
   "remaining_blocking_issues": [],
-  "events_path": "events.jsonl"
+  "events_path": "events.jsonl",
+  "live_progress": null
 }
 ```
 
 Write `state.json` atomically (write to `state.json.tmp`, then `mv` to `state.json`). Create `events.jsonl` in the work directory and append one JSON line for `task_created` with timestamp, phase, and task_id. Also append one `work_dir_resolved` event with the resolved path and which candidate was chosen — the audit trail of where artifacts actually live.
 
-After this, `state.json` exists with `config: {}` and `events.jsonl` exists. The two precheck steps below (steps 2 and 3) will append events and `Edit` `state.json` to populate `config.visualize_*` keys. Phase 1.5 mode-pick (later) MUST merge mode config into existing `config` without overwriting `visualize_*`.
+After this, `state.json` exists with `config: {}`, `live_progress: null`, and `events.jsonl` exists. The two precheck steps below (steps 2 and 3) will append events and `Edit` `state.json` to populate `config.visualize_*` keys. Phase 1.5 mode-pick (later) MUST merge mode config into existing `config` without overwriting `visualize_*` or `live_progress_enabled`.
+
+### Mint live-progress master artifact (step 1d — MANDATORY, immediately after state.json init)
+
+> **STOP — this is the step v0.5.0–v0.5.5 orchestrators were observed skipping.** Without this mint, the user sees no sidebar dashboard for the entire run. The mint is one HTML render + one `mcp__cowork__create_artifact` tool call. Do not skip it. Do not "do it later". Do not "do it at the precheck step". Do it NOW, before MCP precheck (step 2), before visualize precheck (step 3), before anything else. The reason it lives here in Step 1 (and not in a separate step 3.5 like v0.5.5) is that Step 1 (Task setup) is non-skippable; every other step has been observed to be skippable under context pressure.
+
+**Sub-action 1d-1: Probe artifact tool availability via ToolSearch.**
+
+Call `ToolSearch(query="select:mcp__cowork__create_artifact,mcp__cowork__update_artifact,mcp__cowork__list_artifacts", max_results=3)`. Inspect the result:
+
+- If `mcp__cowork__create_artifact` AND `mcp__cowork__update_artifact` schemas BOTH load → live-progress is available. Proceed to 1d-2.
+- If either schema fails to load → live-progress is NOT available (you are running outside Cowork, or Cowork's host does not expose artifact tools). Atomic-`Edit` `state.json` to set `config.live_progress_enabled = false`. Append a `live_progress_unavailable` event to `events.jsonl` with `{"reason": "create_artifact or update_artifact schema did not load"}`. **Skip sub-actions 1d-2 through 1d-5.** Continue to step 2 (MCP precheck) without live-progress.
+
+**Sub-action 1d-2: Atomic-`Edit` `state.json` to populate the `live_progress` block AND set the enabled flag.**
+
+```json
+"config": { "live_progress_enabled": true },
+"live_progress": {
+  "artifact_id": "memo-<task_id>-live",
+  "html_path": "<state.json.work_dir>/live-progress.html",
+  "started_at_iso": "<NOW_ISO>",
+  "phase_started_at_iso": "<NOW_ISO>",
+  "timeline": [
+    { "phase": "intake_preliminary_research", "started_at_iso": "<NOW_ISO>", "completed_at_iso": null }
+  ],
+  "active_subagents": null,
+  "source_counts": null,
+  "topic": "<short 3-7 word theme generated from user_query>"
+}
+```
+
+**About `topic`:** write a concise 3–7 word theme summarising the user's query. This becomes the dashboard header line (replaces the truncated raw query). Examples for the question *"We're a US-based SaaS company planning to launch a new feature that uses AI to analyze customer support chat transcripts (from EU users) to automatically suggest responses to agents. The transcripts contain names, email addresses, and sometimes account details. Do we need a separate legal basis under GDPR for this AI processing, or does it fall under our existing 'contract performance' basis for providing the support service? Also, does this trigger any DPIA requirement or AI Act obligations?"* — good topics:
+- `"GDPR compliance for AI support feature"`
+- `"AI-on-support-transcripts: GDPR basis + AI Act"`
+- `"Contract basis vs separate basis for AI analytics"`
+
+Bad topics: `"User wants legal advice"` (too generic), `"Memo"` (uninformative), or copying the first 7 words of the query verbatim. Aim for an analytical hook the user could glance at and immediately recognise as their question. If you can't think of one in <10 seconds, ship `null` and the renderer falls back to truncating `user_query`.
+
+Where:
+- `<task_id>` is `state.json.task_id` from sub-step 1b.
+- `<NOW_ISO>` is the current ISO-8601 timestamp.
+- `<state.json.work_dir>` is the resolved absolute work directory.
+
+Atomic write (temp + rename) per the state-schema contract.
+
+**Sub-action 1d-3: Render the initial HTML.**
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}"/scripts/render_live_progress.py \
+  --state-json "<state.json absolute path>" \
+  --current-step "Pipeline starting — Phase 1 intake setup" \
+  --output "<state.json.work_dir>/live-progress.html"
+```
+
+The renderer writes `<output>.tmp` then atomically renames. Includes `<meta charset="UTF-8">` (Cowork iframe requires this for em-dashes / Cyrillic).
+
+**Sub-action 1d-4: Mint the artifact via `mcp__cowork__create_artifact`.**
+
+Call the tool directly:
+
+```
+mcp__cowork__create_artifact(
+  id="memo-<task_id>-live",
+  html_path="<state.json.work_dir>/live-progress.html",
+  description="Live pipeline dashboard for legal-memo-writer — auto-refreshes as phases progress"
+)
+```
+
+`create_artifact` is first-write-wins. If the call errors with "An artifact with id X already exists" (resumed task where the prior run minted the same id), fall back to a single `mcp__cowork__update_artifact` call with the same id and html_path — the artifact already exists, just refresh its content. Append a `live_progress_existing_artifact_reused` event.
+
+The v0.5.4 plugin-bundled PreToolUse hook (`hooks/auto_approve_cowork.py`) auto-approves this call so no permission prompt surfaces in chat. If the hook is somehow not honored (Cowork build doesn't load plugin hooks, etc.) the user sees a prompt — they click Approve once and the mint proceeds.
+
+**Sub-action 1d-5: Append two events to `events.jsonl`:**
+
+- `live_progress_precheck_result` with `{"enabled": true, "artifact_id": "memo-<task_id>-live", "html_path": "<work_dir>/live-progress.html"}`.
+- `live_progress_artifact_minted` with `{"artifact_id": "memo-<task_id>-live"}`.
+
+**Sub-action 1d-6 (self-verify): Read `state.json`. Confirm `live_progress.artifact_id` is non-null AND `config.live_progress_enabled` is `true`.** If either is missing, you skipped sub-action 1d-2 — atomic-`Edit` `state.json` to fix it now, then proceed. This is the verification step that catches the v0.5.x failure mode that motivated this restructure.
+
+After step 1d completes successfully (or skips gracefully on tool unavailability), continue to step 2 (MCP precheck). The remaining downstream contract is unchanged from prior versions — see "MANDATORY — orchestrator's downstream responsibility at every phase transition" below for what to do at later phase boundaries.
 
 ### MCP availability precheck (step 2 — requires state.json and events.jsonl from step 1)
 
@@ -262,9 +344,61 @@ or
 
 **Caching read_me guidelines.** The first widget call in the run (typically Phase 1.5) should call `visualize:read_me(modules=["mockup", "diagram", "data_viz"], platform="desktop")` ONCE and cache the result in `state.json.cache.visualize_guidelines` (or write to `$WORK_DIR/cache/visualize-guidelines.md` if the payload is large). Subsequent widget calls reuse the cached guidelines — do not re-fetch.
 
+### Live-progress at phase transitions (downstream responsibility)
+
+> The initial mint of the live-progress master artifact has been moved to **Step 1 sub-step 1d (Mint live-progress master artifact)** as of v0.5.6 — bundled with the non-skippable Task setup rather than as a separate step. See sub-step 1d above for the mint procedure. The downstream-responsibility block below describes what the orchestrator does at every SUBSEQUENT phase transition (Phase 1 → 2, Phase 4 → 5, Phase 7 → 7.5, etc.).
+
+**MANDATORY — orchestrator's downstream responsibility at every phase transition.** At every `current_phase` change later in the pipeline, the orchestrator MUST execute the following sequence as ONE atomic action (treat it the same as the existing TodoWrite + mark_chapter mantras at phase transitions):
+
+1. Update `state.json` (atomic write — temp + rename) to:
+   - Set the previous phase's `live_progress.timeline[last].completed_at_iso = NOW`.
+   - Append a new entry `{ "phase": "<new phase>", "started_at_iso": "<NOW>", "completed_at_iso": null }`.
+   - Set `live_progress.phase_started_at_iso = NOW`.
+2. Re-render the HTML: `Bash: python3 "${CLAUDE_PLUGIN_ROOT}/scripts/render_live_progress.py" --state-json "<state.json>" --current-step "Phase <new_phase> — starting" --output "<html_path>"`.
+3. Call `mcp__cowork__update_artifact(id=<artifact_id>, html_path=<html_path>, update_summary="phase-<new_phase>-start")`.
+
+These three steps are paired the same way TodoWrite-update + mark_chapter + Progress-block are paired. Treat the live-progress update as a peer of those — do not skip it because "the user can't see it until end-of-turn anyway". Orchestrator-side updates DO buffer to end-of-turn (v0.2.0 falsification confirmed), but they keep the dashboard state consistent at the next flush moment (user gate / end-of-turn) AND they update `state.json.live_progress.timeline` which subsequent subagent emissions read.
+
+Skip the entire sequence if `state.json.config.live_progress_enabled == false`.
+
+**Subagents** call `update_artifact` at their own internal step boundaries — see each agent's "Live progress" section, each agent's "Pre-return checklist" section (added in v0.5.1 to enforce the `done` emission), and `references/live-progress-contract.md`.
+
+**MANDATORY — orchestrator's active_subagents plumbing at every subagent dispatch (v0.6.0+, list-form v0.6.2+).** The live-progress dashboard renders one `🛠 <name>` chip per element of `state.json.live_progress.active_subagents`. To keep those chips honest, the orchestrator MUST set + clear the list around every `Task(subagent_type=...)` dispatch. Treat this as a peer of the TodoWrite + mark_chapter mantras that already surround subagent dispatches.
+
+Exact sequence around every `Task(subagent_type="<name>", ...)` call:
+
+1. **Before dispatch:** atomic-`Edit` `state.json.live_progress.active_subagents = ["<name>"]`. Single-element list for a single dispatch. (e.g. `["case-law-researcher"]`, `["memo-writer"]`, `["revision-mediator"]`.)
+2. **Re-render + update_artifact** so the chip surfaces immediately (this is one of the orchestrator-side updates already covered by the "downstream responsibility at every phase transition" block above when the dispatch coincides with a phase change; do an extra update_artifact here when the dispatch is mid-phase).
+3. **Dispatch** via `Task(...)`. Block until return as usual.
+4. **After return:** atomic-`Edit` `state.json.live_progress.active_subagents = null` (or `[]`, both treated as "no chip"). No extra render/update needed — the next event (subagent done, next dispatch, phase transition) will refresh the artifact anyway.
+
+**Parallel dispatches** (Phase 5 parallel researchers, Phase 9 parallel reviewers): set `active_subagents` to a list of ALL dispatched subagent names — the renderer makes one chip per element so the user sees them side-by-side. Set to null/empty after the whole batch returns.
+
+Examples:
+- Phase 5 parallel research (Full mode, doctrinal included): `["statutory-researcher", "case-law-researcher", "doctrinal-researcher"]` → three 🛠 chips.
+- Phase 5 parallel research (Brief mode): `["statutory-researcher"]` → one chip.
+- Phase 9 parallel reviewers (Full mode, 5 reviewers): `["logic-reviewer", "clarity-reviewer", "style-reviewer", "citation-auditor", "counterargument-reviewer"]` → five chips.
+- Single dispatch (memo-writer, mediator, client-readiness): `["<single-name>"]` → one chip.
+
+The list-form is preferred — v0.6.0–v0.6.1 used a single string and collapsed parallel dispatches into a coarse label like `"3 researchers (parallel)"`; that hid which specific subagents were running. The list-form gives per-subagent visibility, which is what the user wants to see in the dashboard.
+
+**Backwards compatibility:** the renderer also accepts a bare string in `active_subagent` (singular, legacy field) and treats it as a single-element list. New code should always write `active_subagents` (plural, list).
+
+Skip the entire sequence when `state.json.config.live_progress_enabled == false`.
+
 ### Dispatch fact-assumption-analyst (step 4)
 
-After all three preceding steps (Task setup, MCP precheck, Visualize precheck):
+After all **four** preceding steps (Task setup, MCP precheck, Visualize precheck, Live-progress precheck AND mint).
+
+**4-pre. Mandatory verification block before dispatch.** Confirm in your own head, BEFORE proceeding to 4a:
+
+- [ ] `state.json` exists with `task_id`, `work_dir`, `current_phase = intake_preliminary_research`.
+- [ ] `state.json.config.visualize_enabled` is set (true or false).
+- [ ] `state.json.config.live_progress_enabled` is set (true or false).
+- [ ] **If `live_progress_enabled = true`:** `state.json.live_progress.artifact_id` is non-null AND the `mcp__cowork__create_artifact` call was made AND `events.jsonl` has a `live_progress_artifact_minted` line. If any of these are not true, go back to **Step 1 sub-step 1d** and execute the mint NOW before continuing. This is the single most-skipped requirement in v0.5.x and the user-visible failure mode is "live-progress dashboard never appears". Step 4 will not save you if step 1d was incomplete.
+- [ ] `events.jsonl` has at minimum: `task_created`, `work_dir_resolved`, `mcp_precheck_result`, `visualize_precheck_result`, `live_progress_precheck_result` (and `live_progress_artifact_minted` when enabled).
+
+If all checkboxes pass, proceed to 4a. Otherwise, fix the gap and re-run the verification.
 
 **4a. Initialize TodoWrite side-panel.** Per `references/progress-contract.md` §"TodoWrite side-panel channel", call `TodoWrite` ONCE with the canonical 14-item list. Item #1 ("Intake — fact triage and questions") = `in_progress`; items #2–#14 = `pending`. This populates the right-side task panel from the start so the user can see the full pipeline shape and know where work currently is. If `TodoWrite` is unavailable in this host, skip silently and continue — chat Progress remains the primary channel.
 
@@ -768,6 +902,8 @@ Substitute `<N>` with `len(state.json.dispatched_researchers)`, `<list>` with th
 ```
 After research completes, the chat will appear quiet through the sufficiency check, currency check, and source-pack assembly — those phases run silently in the same assistant turn because Cowork only flushes chat at end-of-turn (documented host behaviour, see issues #26805 / #29773 family). The pipeline then stops at a source-review checkpoint where the assistant turn ENDS explicitly. At that point Cowork flushes everything and you will see the full Progress audit trail plus the source-pack digest at once. Reply `continue` to proceed to drafting, or `cancel` to stop. The TodoWrite panel item #9 reflects the live state throughout.
 
+If the sufficiency reviewer surfaces facts that the analysis still needs from you (rather than from more research), the pipeline may also stop ONE more time at a Phase 6.6 follow-up gate BEFORE the source-review checkpoint — same end-of-turn flush mechanism, with a short elicitation widget asking the missing facts. Reply with letter answers (`1A 2C`), free-text (`1:my custom answer`), `proceed` to accept defaults, or `cancel`. This gate fires at most once per run (capped by the `research_followup` budget) and is silent when no user-facing gaps remain.
+
 After `continue` at source-review, the pipeline runs fully autonomously through drafting, revision loop (up to <max_iterations> iterations), client-readiness review, optional polish, and docx export — ALL in one assistant turn with NO further user gates (per v0.0.44 — gates were removed because they hit the same Cowork silent-fail bug after parallel Tasks). Expect ~15-40 minutes of visual silence in chat during this block. Monitor real-time progress via the task panel on the right: items #10 (Draft v1), #11 (Revision loop), #12 (Client-readiness review), #13 (Export to docx), #14 (Finalize) advance through the phases. The chat flushes the complete audit trail at end-of-turn when the final docx is written.
 ```
 
@@ -844,10 +980,81 @@ It writes `research/research-sufficiency.json`.
 Read the JSON. Branch on `overall_verdict`:
 
 - `overall_verdict = sufficient` → continue. No mode-driven override exists any more — the sufficiency reviewer's verdict is honoured verbatim.
-- `overall_verdict = targeted_followup_needed` → read `state.json.attempts.research_followup`.
-  - If it is `0`: atomically increment it to `1`, set `attempts.research_followup_pending_review = true`, append `research_followup_started` to `events.jsonl`, send each `recommended_followup_prompt` to the relevant researcher once, then re-run `research-sufficiency-reviewer` once and set `attempts.research_followup_pending_review = false`.
-  - If it is already `>= 1` and `attempts.research_followup_pending_review = true`: do NOT re-dispatch follow-up on resume. Re-run `research-sufficiency-reviewer` once against the current research files, then set `attempts.research_followup_pending_review = false`.
-  - If it is already `>= 1` and `attempts.research_followup_pending_review = false`: do NOT re-dispatch follow-up. Treat remaining gaps as either `insufficient_for_client_ready_memo` or drafting warnings, using the sufficiency reviewer's latest JSON.
+- `overall_verdict = targeted_followup_needed` → **partition `blocking_gaps[]` by `target_agent`** into two subsets, then branch:
+  - **Subset R** = entries with `target_agent ∈ {statutory-researcher, case-law-researcher, doctrinal-researcher}` — researcher-resolvable gaps.
+  - **Subset U** = entries with `target_agent == "main-session"` — user-fact gaps (each MUST have a non-null `followup_question` block per `agents/research-sufficiency-reviewer.md` §"Generating followup_question for main-session gaps"; if any Subset U entry has `followup_question == null`, that is a reviewer-output bug — log a `research_sufficiency_schema_violation` warning event, treat the entry as if it were in Subset R with a `recommended_followup_prompt` fabricated from the `gap` text, and continue).
+
+  Then read `state.json.attempts.research_followup` and apply ONE of these four branches:
+
+  - **Branch B6a — Subset U non-empty AND `attempts.research_followup == 0`** (Phase 6.6 user-followup gate fires):
+    1. Atomically `Edit` `state.json`:
+       - `current_phase = "research_sufficiency_followup_pending"`
+       - `attempts.research_followup = 1` (consumes the single follow-up budget)
+       - `attempts.research_followup_pending_review = true`
+       - Populate the new `sufficiency_followup` object (see `state-schema.md`):
+         ```json
+         "sufficiency_followup": {
+           "status": "questions_pending",
+           "questions": <Subset U entries augmented with sequential `question_number` starting at 1>,
+           "subset_r": <Subset R as a separate array — researcher-resolvable gaps queued for re-dispatch after user replies; each item references the matching `issue_coverage[].recommended_followup_prompt`>,
+           "user_response": null,
+           "asked_at": "<NOW_ISO>",
+           "answered_at": null
+         }
+         ```
+    2. Append `research_followup_user_gate_started` event to `events.jsonl` with `{"main_session_gap_count": <len(Subset U)>, "researcher_gap_count": <len(Subset R)>, "research_followup_attempt": 1}`.
+    3. Emit a `gate_announced` event (separate from above, follows the events-contract.md taxonomy) with `gate_name: "sufficiency-followup"`, `options_offered: ["letter-answers", "free-text", "proceed-on-defaults", "cancel"]`.
+    4. **Path A (`state.json.config.visualize_enabled == true`)** — render the elicitation widget for Subset U follow-up questions:
+       - Build the data payload per `skills/memo/references/widget-schemas.md §Sufficiency follow-up` (reuses §Elicitation shape). Letter-label each `options[]` entry (A/B/C/D) per question, in order.
+       - Following the cached `elicitation` module guidelines, generate self-contained HTML/SVG (≤40 KB, no JavaScript callbacks).
+       - Save snapshot to `$WORK_DIR/widgets/phase66-followup-elicitation.html`.
+       - Call `<visualize_namespace>__show_widget` with the title / loading_messages / widget_code per `widget-schemas.md §Sufficiency follow-up`.
+       - Append `visualize_widget_rendered` event with `{"phase": "6.6-followup", "module": "elicitation", "question_count": <len(Subset U)>}`.
+       - Print the framing message + answer instructions to chat (always in English; verbatim structure — only placeholders change):
+         ```
+         Research surfaced <N> fact(s) the analysis still needs from you before drafting can proceed. The card below lays them out; pick a letter per question, or type your own answer. Skipping a question applies a conservative default assumption shown in the card.
+
+         📄 Full sufficiency report: research/research-sufficiency.json (open via the artifact card above; plain path: <state.json.rel_work_dir>/research/research-sufficiency.json)
+
+         👆 The follow-up card above shows the questions. Reply in chat with your answers:
+
+         - **Follow-up answers** (questions 1..<N>): one letter per question, space-separated, in order. Example: `1A 2C 3B`.
+         - **Free-text answer**: use `2:my custom text` (the question number, colon, then your text). Example: `1A 2:we use Azure OpenAI 3B`.
+         - **Skip everything and run on default assumptions**: reply with just `proceed` (the memo will apply the default assumption shown for each question and continue to drafting).
+         - **Cancel the task**: reply with just `cancel`.
+
+         From another Cowork session: /legal-memo-writer:continue <task_id> followup: <answers>
+         ```
+    5. **Path B (`visualize_enabled == false` OR Path A widget call throws)** — text fallback:
+       - Print the framing + question list as plain text:
+         ```
+         Research surfaced <N> fact(s) the analysis still needs from you before drafting. Each question is below with its options and the default assumption that will apply if you skip.
+
+         📄 Full sufficiency report: research/research-sufficiency.json (plain path: <state.json.rel_work_dir>/research/research-sufficiency.json)
+
+         Questions:
+
+         **1. <question_text>** (rationale: <rationale_md>)
+            A. <option label> — <option description>
+            B. <option label> — <option description>
+            ...
+            Default if skipped: <default_assumption_if_skipped>
+
+         <repeat for each Subset U question>
+
+         Reply with one of:
+         - `/legal-memo-writer:continue <task_id> followup: 1A 2C 3:my custom text` — provide answers
+         - `/legal-memo-writer:continue <task_id> proceed` — skip all and apply defaults
+         - `/legal-memo-writer:continue <task_id> cancel` — stop the task
+         ```
+    6. **End the assistant turn EXPLICITLY.** No inline-continue. No further tool calls. Control returns to the user. The next user message is parsed by `skills/continue/SKILL.md` §`research_sufficiency_followup_pending` handler (in-session or cross-session via `/legal-memo-writer:continue`).
+
+  - **Branch B6b — Subset U empty AND `attempts.research_followup == 0`** (existing researcher re-dispatch path; behaviour unchanged from pre-v0.6.3):
+    Atomically increment `attempts.research_followup` to `1`, set `attempts.research_followup_pending_review = true`, append `research_followup_started` to `events.jsonl`, send each `issue_coverage[].recommended_followup_prompt` to the relevant researcher once, then re-run `research-sufficiency-reviewer` once and set `attempts.research_followup_pending_review = false`.
+
+  - **Branch B6c — `attempts.research_followup >= 1` and `attempts.research_followup_pending_review == true`** (resume after either user or researcher follow-up already happened): do NOT re-dispatch follow-up on resume. Re-run `research-sufficiency-reviewer` once against the current research files (which now include any newly-written `intake/user-facts.md` follow-up answers AND any re-dispatched researcher updates), then set `attempts.research_followup_pending_review = false`.
+
+  - **Branch B6d — `attempts.research_followup >= 1` and `attempts.research_followup_pending_review == false`** (single follow-up budget consumed): do NOT re-dispatch follow-up. Treat remaining gaps as either `insufficient_for_client_ready_memo` or drafting warnings, using the sufficiency reviewer's latest JSON. If any Subset U gap remains and was not resolved (user provided no useful answer), promote it to `drafting_warnings[]` so the memo writer carries the assumption-based caveat into the draft.
 - `overall_verdict = insufficient_for_client_ready_memo` → continue only if the blocker is expressly disclosed in `drafting_warnings`; otherwise set `current_phase = failed`, write a short failure reason to state, and tell the user manual research or missing facts are required.
 
 Before dispatching `currency-checker`, atomically update `state.json.current_phase = currency_check`.

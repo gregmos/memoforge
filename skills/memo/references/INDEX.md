@@ -15,6 +15,7 @@ Quick map of the canonical reference documents under `skills/memo/references/` a
 | Chat-visible Progress message schema, file-reference UX rule (D2), 16-row mandatory-update checklist | `progress-contract.md` | Read once before pipeline work. Sibling of events/logging contracts. |
 | Visualize milestone-tracker widget spec (5 render points) | `progress-tracker.md` | Renders only when `state.json.config.visualize_enabled == true`. |
 | Visualize widget data-payload schemas (elicitation, mode mockup, plan diagram, final dashboard) | `widget-schemas.md` | Demand-loaded per phase: 2a, 1.5, 4a, 12. Separate from the milestone-tracker widget. |
+| Live-progress sidebar dashboard (subagent-side `mcp__cowork__update_artifact` streaming) | `live-progress-contract.md` | Introduced v0.5.0 (postmortem §9 resolved). Master artifact minted at Phase 1 step 3.5; heavy subagents call `update_artifact` at internal step boundaries — those calls flush live to the parent chat scroll. |
 | WebSearch discovery-vs-citation policy | `pipeline-contract.md §WebSearch` | Mirrored in README; researcher prompts cite the canonical paragraph. |
 | Tool inheritance per subagent (allowlist / inherit-all) | `pipeline-contract.md §Tool inheritance` | Cross-checked against agent frontmatter. |
 | Validator scripts contract | `pipeline-contract.md §Validators` | `validate_state.py` and `validate_review_json.py`. |
@@ -31,7 +32,7 @@ If two documents in this list appear to disagree, follow this order (highest aut
 1. `.claude-plugin/plugin.json` / `.mcp.json` (platform manifest)
 2. `pipeline-contract.md` (canonical contract — declared as such in its preamble)
 3. `state-schema.md` (canonical state schema)
-4. `modes.md`, `always-deliver.md`, `mcp-ratelimit-contract.md`, `logging-contract.md`, `operating-contract.md`, `progress-contract.md`, `progress-tracker.md`, `widget-schemas.md`, `events-contract.md` (canonical for their topic)
+4. `modes.md`, `always-deliver.md`, `mcp-ratelimit-contract.md`, `logging-contract.md`, `operating-contract.md`, `progress-contract.md`, `progress-tracker.md`, `widget-schemas.md`, `live-progress-contract.md`, `events-contract.md` (canonical for their topic)
 5. `skills/memo/SKILL.md` / `skills/continue/SKILL.md` / `skills/status/SKILL.md` (orchestration)
 6. `lib/prose-style.md` (domain conventions)
 7. `lib/docx-render/README.md` (visual conventions)
@@ -43,8 +44,9 @@ When a lower-tier doc looks stale, file a follow-up to bring it in sync — do n
 
 | Phase | First read | Then |
 |---|---|---|
-| pre-Phase-1 (always) | `operating-contract.md` + `progress-contract.md` + `events-contract.md` | Activation preamble — read each once before any pipeline work |
+| pre-Phase-1 (always) | `operating-contract.md` + `progress-contract.md` + `events-contract.md` + `live-progress-contract.md` | Activation preamble — read each once before any pipeline work |
 | 1 init | `state-schema.md` for the Phase 1 init template | — |
+| 1 step 3.5 live-progress mint | `live-progress-contract.md` §"How the channel works" | mint artifact, write `state.json.live_progress` |
 | 1.5 mode pick | `modes.md` + `widget-schemas.md §Mode mockup` | `progress-tracker.md` (Milestone 1) if visualize enabled |
 | 2a intake | `widget-schemas.md §Elicitation` | `agents/fact-assumption-analyst.md` for JSON schema |
 | 4a plan approval | `widget-schemas.md §Plan diagram` | — |

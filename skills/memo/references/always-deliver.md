@@ -33,6 +33,8 @@ When a phase encounters failure or forced degradation, the orchestrator (`skills
 |---|---|---|
 | Verdict = `insufficient_for_client_ready_memo` and follow-up budget consumed | Proceed to drafting. Memo MUST contain a dedicated "Open questions / unverified facts" section listing what remains unanswered. | "Research sufficiency: insufficient. Open questions disclosed in section X — do not act on this memo without further investigation." |
 | `research-sufficiency-reviewer` itself crashes | Re-dispatch once with explicit error context. If second attempt fails, proceed as if verdict = insufficient (above). | "Research sufficiency review unavailable; defaulting to insufficient status." |
+| Phase 6.6 user-followup gate fired but reviewer JSON had `main-session` blocking_gap with `followup_question == null` (reviewer-output bug; v0.6.3+) | Log `research_sufficiency_schema_violation` event. Treat each malformed gap as if it were a researcher gap with `recommended_followup_prompt` fabricated from the `gap` text. Fall through to researcher re-dispatch (Branch B6b). | No user-facing banner — orchestrator-internal recovery, audit only. |
+| Phase 6.6 user-followup gate fired, user answered, but Subset U gaps remain unresolved after re-run sufficiency (`attempts.research_followup >= 1` consumed; user gave answers that did not resolve the legal gap) | Promote remaining Subset U gaps to `drafting_warnings[]`; memo writer carries assumption-based caveats into the draft. | "Some facts material to the analysis remained ambiguous after follow-up. Memo proceeds on conservative default assumptions documented in the Assumptions section." |
 
 ### Phase 6.5 (currency check)
 

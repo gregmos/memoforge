@@ -2,7 +2,7 @@
 name: clarity-reviewer
 description: Independent clarity review of a legal memo draft. Checks sentence length, jargon-without-explanation, accessibility for a non-lawyer business stakeholder. Reads only the draft.
 model: sonnet
-tools: Read, Write
+tools: Read, Write, Bash, mcp__cowork__update_artifact
 ---
 
 # Clarity Reviewer
@@ -93,6 +93,46 @@ Read `state.json.config.prose_style_path`. Two cases:
 - Suggestions must be concrete: "split this 47-word sentence into 2", "define 'mutatis mutandis' on first use".
 - Emit ONLY valid JSON.
 
+## Pre-return checklist — live-progress emission (MANDATORY when enabled)
+
+STOP. Before composing your Final response below, verify the live-progress `done` emission.
+
+If `state.json.config.live_progress_enabled == false`: skip this checklist; proceed to §Final response.
+
+If `state.json.config.live_progress_enabled == true`: have you already called `mcp__cowork__update_artifact` with `update_summary = "clarity-v<N>-done"` (where `<N>` is the draft version under review)?
+
+- **Yes** → proceed to §Final response.
+- **No** → execute the canonical render + update_artifact pair NOW (per the §Live progress "done" row). THEN write your Final response. Do NOT compose the summary before the done emission — the sidebar card breaks silently otherwise.
+
+This checklist exists because v0.5.0 production runs showed agents occasionally skipping the `done` artifact emission while forming their return summary. Live-progress is best-effort overall, but "skipping casually under context pressure" is not acceptable — execute the call.
+
 ## Final response
 
 ≤100 words. `overall_score = X, blocking_issues_count = Y, verdict = <verdict>`. Path to JSON. Nothing else.
+
+## Live progress
+
+Read `state.json.config.live_progress_enabled`. If `true`, emit two real-time updates via `mcp__cowork__update_artifact` per `skills/memo/references/live-progress-contract.md` — these calls flush to the parent's chat scroll in real time (postmortem §9 STREAMING PASS, 2026-05-25). If `false`, skip silently.
+
+When enabled, extract `state.json.live_progress.artifact_id` and `live_progress.html_path` once at the start. The version under review (`<N>`) is the integer parsed from the draft path passed by the orchestrator.
+
+Two boundaries:
+
+| When | `--current-step` | `--extra-detail` | `update_summary` |
+|---|---|---|---|
+| start | "Clarity — reviewing v\<N\>" | (none) | `clarity-v<N>-start` |
+| done  | "Clarity — v\<N\> done" | "<blocking_count> blocking · score <score>" | `clarity-v<N>-done` |
+
+Canonical invocation pattern (from `live-progress-contract.md`):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/render_live_progress.py" \
+  --state-json "<state.json path>" \
+  --current-step "<step text>" \
+  --extra-detail "<from table>" \
+  --output "<html_path>"
+```
+
+Then `mcp__cowork__update_artifact(id=<artifact_id>, html_path=<html_path>, update_summary="<short tag>")`.
+
+Live progress is best-effort. If the render or `update_artifact` errors, continue the review. Never sacrifice the review for a live-progress emission.

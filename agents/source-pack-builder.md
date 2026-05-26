@@ -2,7 +2,7 @@
 name: source-pack-builder
 description: Builds an evidence table from research and currency files so the writer and citation auditor work from a structured source pack rather than loose notes.
 model: sonnet
-tools: Read, Write, Glob, Grep
+tools: Read, Write, Glob, Grep, Bash, mcp__cowork__update_artifact
 ---
 
 # Source Pack Builder
@@ -70,6 +70,69 @@ Writers must cite from this table where possible. Citation auditor treats this p
 - Do not invent missing provision numbers or citations.
 - Prefer official source titles and URLs from research files.
 
+## State.json source_counts (v0.6.0+ MANDATORY when live_progress_enabled)
+
+After you finish writing `research/source-pack.md` and BEFORE you emit the `source-pack-done` live-progress update (see §Live progress below), you MUST atomic-Edit `state.json.live_progress.source_counts` with the counts you observed in the research files. These counts power the `📊 N statutes · M cases · K doctrine` chip in the live-progress sidebar dashboard.
+
+Method — count distinct cited sources, NOT lines or table rows:
+1. **statutes**: distinct entries in `research/statutes.md` that you treated as evidence (rows in your source pack where `Type ∈ {statute, regulation, directive}`).
+2. **cases**: distinct entries from `research/case-law.md` (rows where `Type = case`).
+3. **doctrine**: distinct entries from `research/doctrine.md` if present (rows where `Type ∈ {regulator_guidance, academic, industry, other}`); set to 0 if `research/doctrine.md` did not exist.
+
+Atomic Edit (temp + rename, same pattern as everywhere else) writing:
+```json
+"live_progress": {
+  ...other fields stay as they are...,
+  "source_counts": {
+    "statutes": <int>,
+    "cases": <int>,
+    "doctrine": <int>
+  }
+}
+```
+
+If `state.json.config.live_progress_enabled == false`, skip this step entirely (no chip will render anyway). If the source counts are zero in a layer (e.g. no doctrine for this run), still write the integer `0` — do NOT omit the key.
+
+## Pre-return checklist — live-progress emission (MANDATORY when enabled)
+
+STOP. Before composing your Final response below, verify the live-progress `done` emission.
+
+If `state.json.config.live_progress_enabled == false`: skip this checklist; proceed to §Final response.
+
+If `state.json.config.live_progress_enabled == true`: have you already called `mcp__cowork__update_artifact` with `update_summary = "source-pack-done"` for this dispatch?
+
+- **Yes** → proceed to §Final response.
+- **No** → execute the canonical render + update_artifact pair NOW (per the §Live progress "done" row). THEN write your Final response. Do NOT compose the summary before the done emission — the sidebar card breaks silently otherwise.
+
+This checklist exists because v0.5.0 production runs showed agents occasionally skipping the `done` artifact emission while forming their return summary. Live-progress is best-effort overall, but "skipping casually under context pressure" is not acceptable — execute the call.
+
 ## Final response
 
 <=120 words: output path, number of evidence rows, number of do-not-use/manual-check sources.
+
+## Live progress
+
+Read `state.json.config.live_progress_enabled`. If `true`, emit two real-time updates via `mcp__cowork__update_artifact` per `skills/memo/references/live-progress-contract.md` — these calls flush to the parent's chat scroll in real time (postmortem §9 STREAMING PASS, 2026-05-25). If `false`, skip silently.
+
+When enabled, extract `state.json.live_progress.artifact_id` and `live_progress.html_path` once at the start.
+
+Two boundaries:
+
+| When | `--current-step` | `--extra-detail` | `update_summary` |
+|---|---|---|---|
+| start | "Source-pack — assembling" | "reading research files" | `source-pack-start` |
+| done  | "Source-pack — assembled" | "<row_count> rows · <do_not_use_count> blocked · <manual_check_count> manual-check" | `source-pack-done` |
+
+Canonical invocation pattern (from `live-progress-contract.md`):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/render_live_progress.py" \
+  --state-json "<state.json path>" \
+  --current-step "<step text>" \
+  --extra-detail "<from table>" \
+  --output "<html_path>"
+```
+
+Then `mcp__cowork__update_artifact(id=<artifact_id>, html_path=<html_path>, update_summary="<short tag>")`.
+
+Live progress is best-effort. If the render or `update_artifact` errors, continue assembly. Never sacrifice source-pack quality for a live-progress emission.
