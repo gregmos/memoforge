@@ -64,6 +64,43 @@ Documented empirically through this arc (also in `~/.claude/projects/.../memory/
 
 ---
 
+## 0.7.2 — 2026-05-26 (remove side-car artifact escape hatch from HARD RULE)
+
+**Tightens the v0.7.1 HARD RULE on `live-progress.html` ownership. v0.7.1 sanctioned a side-car artifact alternative ("if you genuinely need a one-off rich view, mint a SEPARATE artifact with a different id") — v0.7.2 explicitly REMOVES that escape hatch. The master `memo-<task_id>-live` is the sole Cowork artifact the pipeline maintains. There are no exceptions.**
+
+### Why
+
+v0.7.1's HARD RULE blocked the most common orchestrator misbehavior (overwriting `live-progress.html` with custom inline HTML), but it left a documented loophole: mint a side-car artifact via `mcp__cowork__create_artifact` with a different id. User flagged this as a back door immediately after v0.7.1 commit — the same context-pressure that drives orchestrators to overwrite the master file would also drive them to mint side-cars. Reasons documented in the contract:
+
+- Multiple artifacts in the sidebar are visual chaos, not richer information — each card competes for attention, no canonical reading order.
+- Side-cars bypass the same tests / schema / backward-compat protections as inline writes. The only difference is the file landing in a different artifact id slot rather than overwriting the master file.
+- The plugin hook auto-approves `mcp__cowork__create_artifact` for ANY id (matcher is tool-name-only, not argument-aware). Side-cars would proliferate without permission prompts to alert the user that the orchestrator is going off-script.
+- "Side-car for one-off rich view" is improvisation by another name. The discipline must be: the renderer's output IS the dashboard, no exceptions.
+
+### What changed
+
+- **`skills/memo/references/live-progress-contract.md` §"HARD RULE" / §"What to do INSTEAD"** — the third bullet ("Want a one-off rich view at a specific moment? Use `mcp__cowork__create_artifact` to mint a SEPARATE artifact...") is REMOVED. Replaced with a new "Side-car artifacts are NOT a sanctioned escape hatch (v0.7.2+)" block that explicitly enumerates the four reasons side-cars are forbidden and clarifies that "feature request for a future plugin version" is the right response when the standard renderer feels insufficient. The two remaining sanctioned paths (edit renderer; add new field under live_progress) are unchanged. New closing sentence: "The master `memo-<task_id>-live` artifact is the **sole** Cowork artifact the pipeline mints under `mcp__cowork__create_artifact`."
+- **`skills/memo/SKILL.md` Step 1 sub-action 1d-3 STOP-block** — extended to explicitly prohibit side-car mints alongside direct file writes: "Do NOT mint side-car artifacts via `mcp__cowork__create_artifact` with a non-master id (e.g. `memo-<task_id>-research-snapshot`) — v0.7.2 explicitly REMOVED the side-car escape hatch that v0.7.1 had inadvertently sanctioned. The master `memo-<task_id>-live` is the sole Cowork artifact the pipeline mints; this Step 1d call is the one permitted `create_artifact` invocation per task."
+- **`skills/memo/SKILL.md` downstream-responsibility STOP-block** — extended analogously: phase-transition refreshes go through `update_artifact` on the master id, never `create_artifact` on a new id.
+
+### Enforcement layers (unchanged from v0.7.1, scope-locked at prose discipline)
+
+v0.7.2 closes the documented loophole; it does NOT add a programmatic enforcement layer. The hook (`hooks/hooks.json`) still auto-approves `mcp__cowork__create_artifact` for any id — a future hardening could parse `tool_input.id` in the inline Python and only auto-approve when the id matches the master `memo-*-live` pattern, surfacing other ids as permission prompts to alert the user that the orchestrator is going off-script. That hook-argument-aware tightening is a v0.7.3+ candidate, NOT shipped here, to keep the v0.7.2 scope narrow (prose-only discipline change).
+
+The `live_progress_html_overwrite_detected` mtime-check in the renderer (the other v0.7.1 §Enforcement posture future-candidate) likewise remains unimplemented in v0.7.2.
+
+### Tests
+
+No code changes. 137/137 tests pass unchanged.
+
+### Effect on users
+
+No user-visible behavior change for runs where the orchestrator was already following the v0.7.1 HARD RULE (i.e. going through the renderer at every refresh). The change is purely documentation tightening: future production runs in which an orchestrator was tempted by the v0.7.1 side-car loophole now have no sanctioned alternative — they must either ship the renderer extension first OR accept the standard dashboard output.
+
+### Manifest match
+
+`.claude-plugin/plugin.json (0.7.2) === README badge (0.7.2) === README install line (memoforge-0.7.2.zip) === CHANGELOG top entry (0.7.2) === dist/memoforge-0.7.2.zip`.
+
 ## 0.7.1 — 2026-05-26 (HARD RULE: live-progress.html owned by render_live_progress.py + fix research_sufficiency_followup_pending phase coverage)
 
 **Two discipline + bug-fix items observed in v0.6.3 / v0.7.0 production runs.**

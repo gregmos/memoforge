@@ -47,9 +47,21 @@ Production runs on v0.6.x–v0.7.0 showed orchestrators occasionally constructin
 
 ### What to do INSTEAD when the standard dashboard feels insufficient
 
+There are exactly TWO sanctioned paths. Both involve changing `render_live_progress.py` or `state.json.live_progress.*` — neither involves writing HTML in any other form, ever.
+
 - **Want a different visual?** Edit `scripts/render_live_progress.py` + `scripts/tests/test_render_live_progress.py`. Bump plugin version. Ship. The renderer is small (~780 lines) and self-contained; visual changes land in one file plus tests.
 - **Want more data on the dashboard?** Add a new field under `state.json.live_progress` documented in `state-schema.md`, populate it from the appropriate writer (orchestrator at a phase boundary, or a specific subagent on its done emission), then extend the renderer to surface it. The v0.6.0 `source_counts` (written by `source-pack-builder`) and v0.6.2 `topic` (written by orchestrator at Step 1d) additions are the canonical examples — both took fewer than 100 LoC across the three files.
-- **Want a one-off rich view at a specific moment?** Use `mcp__cowork__create_artifact` to mint a SEPARATE artifact with a different id (e.g. `memo-<task_id>-research-summary` or `memo-<task_id>-mediator-iter2`). Do NOT touch the master `memo-<task_id>-live` artifact's `html_path` — that file remains the renderer's exclusive domain. The plugin hook auto-approves `mcp__cowork__create_artifact` for any id, so a one-off side-car artifact is permitted; the user sees both artifacts in the sidebar. Document the side-car artifact's purpose in the agent prompt that creates it.
+
+**Side-car artifacts are NOT a sanctioned escape hatch (v0.7.2+).** A previous draft of this contract (v0.7.1) suggested that orchestrators could mint a SEPARATE artifact with a different id (e.g. `memo-<task_id>-research-snapshot`) for one-off rich views, and that the master `memo-<task_id>-live` would remain renderer-owned. That alternative is **REMOVED** in v0.7.2. Reasons:
+
+- The user-visible result of multiple artifacts in the sidebar is visual chaos, not richer information — each artifact card competes for attention, and there's no canonical "which one to read first".
+- Side-cars are improvisation by another name. The same context-pressure that drove orchestrators to overwrite `live-progress.html` in v0.6.x drives them to mint side-cars instead. The discipline must be: the standard renderer output is what the user sees, end of story.
+- Side-cars bypass the same tests / schema / backward-compat protections as inline writes. The only difference is the file landing in a different artifact id slot rather than overwriting the master file.
+- The plugin hook auto-approves `mcp__cowork__create_artifact` for ANY id (matcher is tool-name-only, not argument-aware), so side-cars would proliferate without permission prompts to surface the off-script behavior to the user.
+
+If a moment in the pipeline genuinely needs richer information than the renderer currently surfaces, that is a feature request for a future plugin version — file it, extend the renderer + schema + tests, ship. Do NOT route around the rule with a side-car artifact while waiting for that work.
+
+The master `memo-<task_id>-live` artifact is the **sole** Cowork artifact the pipeline mints under `mcp__cowork__create_artifact`. The Phase 1 sub-step 1d mint call is the ONE permitted invocation per task; subsequent refreshes go through `mcp__cowork__update_artifact` on the same id and html_path, after `render_live_progress.py` has overwritten the file.
 
 ### Enforcement posture
 
