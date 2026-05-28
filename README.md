@@ -44,16 +44,21 @@ If you skip this step, the pipeline still runs — research falls back to WebFet
 
 ### 3 · Ask your question
 
+A real example — a US SaaS team asking about an EU-facing AI feature:
+
 ```
-/memoforge:memo "Can we process biometric data for minors in the EU under GDPR Art. 9 and Art. 22?"
+/memoforge:memo "We're a US-based SaaS company planning to launch a new feature that uses AI to analyze customer support chat transcripts (from EU users) to automatically suggest responses to agents. The transcripts contain names, email addresses, and sometimes account details. Do we need a separate legal basis under GDPR for this AI processing, or does it fall under our existing 'contract performance' basis for providing the support service? Also, does this trigger any DPIA requirement or AI Act obligations?"
 ```
 
-A few more examples that work well:
+The plugin can handle multi-part questions like the one above (lawful basis + DPIA trigger + AI Act classification) in a single memo, surfacing each as its own analysed issue with separate citations.
+
+More examples that work across regulators and jurisdictions:
 
 ```
 /memoforge:memo "Does our US SaaS need a CCPA notice at collection for B2B-only users?"
 /memoforge:memo "Is a click-wrap arbitration clause enforceable against UK consumers under the Consumer Rights Act 2015?"
 /memoforge:memo "Risk analysis for using AI to classify employee emails under the EU AI Act."
+/memoforge:memo "Can we process biometric data for minors in the EU under GDPR Art. 9 and Art. 22?"
 ```
 
 ---
