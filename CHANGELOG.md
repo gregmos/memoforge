@@ -6,6 +6,59 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ---
 
+## 1.1.1 — 2026-05-29 (post-validation fixes: Phase 12.5 tidy now runs · WebFetch auto-approve covers Cowork's MCP fetch tool)
+
+**Two fixes surfaced by the 2026-05-29 validation run** (`memo-20260529T084546Z-gdpr-ai-support-transcripts`, a clean `approved_on_v3` finish that itself validated the v1.1.0 wall-clock work — 1h58m, parallel reviewers, monotonic scores 71.8→78.0→87.8, audit log never went dark). No change to memo legal quality.
+
+**Fix 1 — cluttered deliverable folder (Phase 12.5 tidy never ran).** The task folder was left with 7 side-car `live-progress-*.html` snapshots and a stray `_update_state.py` at the top level. Root cause: Phase 12.5 tidy was wired only into the `memo` skill's phase files, but a full run *always* ends via the `continue` skill (the two-segment architecture: `memo` → `source_review_pending` gate, `continue` → `done`), and `continue/SKILL.md` `### done` had **no tidy step at all**. So in normal operation tidy never ran.
+
+**Fix 2 — WebFetch auto-approve never fired (research permission prompts on allowlisted hosts).** During research the user was prompted ~4×, including for obviously-allowlisted hosts (EDPB, ICO). Root cause: in this Cowork environment web fetching is provided by an **MCP tool** (`mcp__workspace__web_fetch`), not the native `WebFetch` — the run's `logs/*-tools.jsonl` show fetches logged as `mcp__workspace__web_fetch` while searches logged as native `WebSearch`. The PreToolUse auto-approve hook matched only `^WebFetch$`, so it never fired for fetches and the curated host allowlist (which already contains `europa.eu`, `ico.org.uk`, …) was never consulted — every research fetch fell through to a manual prompt (~one per researcher subagent, since Cowork's "always-allow" resets across dispatch boundaries).
+
+### Added
+- **`scripts/tidy_workdir.py`** (+ `scripts/tests/test_tidy_workdir.py`, 10 tests) — the deterministic, cross-platform engine behind Phase 12.5. Self-guards on `state.json` (skips `failed` / `cancelled_by_user` / `fallback_*` / unfinished), deletes top-level side-car `live-progress-*.html` + stray top-level `*.py` + recursive `*.tmp`, reports what it removed (no silent swallow), and always exits 0 so it can never break a finished pipeline. `--dry-run` / `--json` supported.
+
+### Fixed
+- **`skills/continue/SKILL.md` `### done`** now runs the tidy script before end-turn — this is the path that actually executes the ending of every real run, so this is the fix that makes tidy fire.
+- **`references/phases/phase-12_5.md`** replaces the inline `find ... -delete` (GNU-find-only; broke silently on a Windows host; swallowed every error) with the `python3 || python` script call.
+- **`hooks/hooks.json` WebFetch block** matcher widened from `^WebFetch$` to `^WebFetch$|^mcp__.*fetch$` so it also fires for Cowork's MCP fetch tool (`mcp__workspace__web_fetch`); the inline Python now extracts the URL across input-key shapes (`url`/`uri`/`link`/`href`/`address`/`target`, then a regex scan of any string value) instead of only `tool_input.url`. The host allowlist gate is unchanged — the broader matcher only widens what gets *checked*, so non-allowlisted hosts (law-firm blogs, etc.) still prompt. Verified with a harness that runs the shipped command against native + MCP tool shapes and the allowlist boundary.
+
+### Changed
+- **The canonical master `live-progress.html` is now PRESERVED** (only its off-contract `live-progress-*.html` side-cars are deleted). ≤v1.1.0 deleted the master too, relying on the Cowork chat artifact card — but that only persists inside the originating chat, so a delivered / synced / archived folder is better off keeping its one terminal-state dashboard. The `live-progress-*.html` glob (note the hyphen) matches side-cars only.
+- **`PHASE-MACHINE.md`** `done` row + Notes record that `done` is reached via `continue`, so anything that must run at `done` belongs in `continue/SKILL.md`, not just the `memo` phase files (the gotcha that caused this bug).
+- **Added `artificialintelligenceact.eu`** to the WebFetch auto-approve allowlist (a recurring AI Act article/timeline reference). Law-firm blogs (e.g. `gibsondunn.com`) remain deliberately excluded — users grant those via the README `~/.claude/settings.json` fallback.
+
+### Tests
+171 pass (161 baseline + 10 tidy). WebFetch hook verified out-of-band against the shipped command string (native `WebFetch` + `mcp__workspace__web_fetch` + alt-key + allowlist-boundary cases all correct).
+
+---
+
+## 1.1.0 — 2026-05-29 (pipeline wall-clock optimization: run analyzer · SKILL.md router · revision-loop convergence · proportional follow-up)
+
+**Targets the 1.5h–3h same-prompt variance in Full-mode runs.** Root cause (proven from the 2026-05-28 ~4h run `memo-20260528T072015Z-gdpr-ai-support-transcripts`): on the long autonomous block, Cowork context-summarization made the orchestrator drop instructions — reviewers dispatched **serially instead of in parallel (~40 min lost)**, the revision loop thrashed (scores 81.8→87.2→86.0, iteration 3 wasted), and `events.jsonl` went dark ~1h45m before the run finished. This release attacks that structurally and trims wasted work, with **no change to memo legal quality**.
+
+### Added
+- **`scripts/analyze_run.py`** (+ `scripts/tests/test_analyze_run.py`) — read-only forensics over a task's `events.jsonl` + file mtimes: per-phase / per-agent timing, **serial-reviewer-round detection**, score-regression flags, events-truncation detection, and `--compare <slow> <fast>`. Reconstructs the second half of a run from mtimes when the audit log dies mid-run (the common slow-run signature).
+- **`skills/memo/PHASE-MACHINE.md`** — compact control-flow cheat-sheet (one row per `current_phase`: dispatch incl. **parallelism**, state writes, events, turn). Re-read at every phase boundary as a summarization defense; authoritative for control flow.
+- **`scripts/tests/test_phase_machine_coverage.py`** — drift guard (cheat-sheet ↔ `PHASES_ORDERED` ↔ router ↔ phase files).
+
+### Changed
+- **B1 — `SKILL.md` is now a ~140-line router.** Its ~1,400 lines of per-phase prose were extracted verbatim (byte-verified lossless) into **`skills/memo/references/phases/phase-*.md`** (17 files), read only on entering each phase. The resident orchestrator instruction floor drops **~79K → ~17–25K tokens**, so context-summarization fires later / less destructively and the parallel-dispatch + event-emission invariants survive. `references/INDEX.md` demotes the progress/events/live-progress contracts to demand-read; `skills/continue/SKILL.md` gets a phase-reference mapping note.
+- **C1 — revision-loop convergence.** The mediator records `aggregate_score` per iteration and: on a **regression** delivers the best earlier draft (instead of shipping a worse one), and on a **plateau** above the (revived) `exit_threshold_score` exits early as `accepted_early_on_v<N>`. Reuses existing validated `final_status` values — no schema break.
+- **C2 — targeted revision edits.** The orchestrator pre-seeds `drafts/v<N+1>.md` as a copy of v<N>; the writer **edits only the mediator-flagged sections in place** (full rewrite only if blockers span >half the analytical sections). Prevents regressions in clean sections and cuts rewrite time.
+- **D — proportional research follow-up.** Only `missing`-status gaps re-dispatch their named researcher; `weak` / informational gaps are disclosed as `drafting_warnings[]` instead of triggering a full 3-researcher re-run (~20 min when it would have fired).
+
+### Fixed
+- `references/pipeline-contract.md` §Tool inheritance now lists `Bash` + `mcp__cowork__update_artifact` for memo-writer / revision-mediator (matches their frontmatter; resolves the earlier live-progress "Bash not in allowlist" log lines).
+- Stale post-refactor references repointed to phase files (`SKILL.md:186`, `Phase 2a line 296`, broken `(.)` links); `operating-contract.md` revision-cap matrix corrected from the obsolete Quick/Standard/Deep to **Brief=1, Full=3**.
+
+### Tests
+161 pass (149 baseline + 6 analyzer + 3 phase-machine coverage). C1 convergence exit states verified against `validate_state.py` (regression-revert + plateau both validate clean).
+
+### Not in this release
+B2 enforcement hooks (Stop + PreToolUse) remain **spike-gated** — they need a live-Cowork spike to confirm Stop re-entry + PreToolUse `deny` on Windows before shipping. No `git tag` was cut for this build (test build).
+
+---
+
 ## 1.0.0 — 2026-05-28 (first public release — Lessons Studio removed, README rewritten for GitHub)
 
 **This is the first public release of `memoforge`.** Two large changes land together: the Lessons Studio (cross-run learning) subsystem is removed from the plugin, and `README.md` is rewritten from scratch as a GitHub landing page for end users (lawyers, lay readers) rather than the prior engineering-internal layout.

@@ -10,6 +10,10 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Task, AskUserQuestion, WebFe
 
 You are the main session resuming an interrupted legal memo task. This is the **explicit recovery path** when automatic reentry on the `memo` skill did not pick up the previous state (closed tab, new session, long pause).
 
+## Note on phase references (B1b router refactor)
+
+This skill cites the memo skill's procedures as "`skills/memo/SKILL.md` Phase N" / "memo Phase N step X". As of the B1b refactor, `SKILL.md` is a thin **router**; the full per-phase procedure prose now lives in **`skills/memo/references/phases/phase-<n>.md`** (mapped from `current_phase` by the dispatch table in `SKILL.md` §"Phase procedures"). So wherever this skill says "execute / mirror memo Phase N", read the matching `references/phases/phase-<n>.md` (e.g. Phase 1.5 → `phase-1_5.md`, Phase 2a/2b → `phase-2a.md`/`phase-2b.md`, Phase 9 → `phase-9.md`, Phase 11 → `phase-11.md`). Any "lines around N" citations are stale post-refactor — find the content by section heading in the phase file. Also re-read `skills/memo/PHASE-MACHINE.md` at each boundary (control-flow authority), same as the memo skill.
+
 ## Parse argument
 
 Read `$ARGUMENTS`. Parse it as:
@@ -397,7 +401,7 @@ If `research/research-sufficiency.json` is missing, dispatch `research-sufficien
 If verdict is `sufficient`, proceed to currency check. (No mode-driven override exists any more — the verdict is honoured verbatim.)
 
 If verdict is `targeted_followup_needed`, check `state.json.attempts.research_followup` before doing anything:
-- If `0`, atomically increment to `1`, set `attempts.research_followup_pending_review = true`, append `research_followup_started` to `events.jsonl`, re-dispatch the relevant researcher(s) once with targeted follow-up prompts, then re-run the sufficiency reviewer once and set `attempts.research_followup_pending_review = false`.
+- If `0`, atomically increment to `1`, set `attempts.research_followup_pending_review = true`, append `research_followup_started` to `events.jsonl`, re-dispatch the relevant researcher(s) once with targeted follow-up prompts **proportionally per `phase-6.md` §"Proportional researcher re-dispatch (D)"** (only `missing`-status gaps trigger re-dispatch of their named `target_agent`; `weak`/informational gaps go to `drafting_warnings[]` instead of re-research), then re-run the sufficiency reviewer once and set `attempts.research_followup_pending_review = false`.
 - If `>= 1` and `attempts.research_followup_pending_review = true`, do NOT re-dispatch follow-up on resume. Re-run `research-sufficiency-reviewer` once against the current research files, then set `attempts.research_followup_pending_review = false`.
 - If `>= 1` and `attempts.research_followup_pending_review = false`, do NOT re-dispatch follow-up. Treat remaining gaps as either `insufficient_for_client_ready_memo` or explicit drafting warnings.
 
@@ -430,7 +434,7 @@ Three sub-paths, evaluated in order:
   - Emit `phase_transition` event for the new `current_phase`.
   - **Dispatch branch:**
     - If `subset_r` is empty: re-dispatch `research-sufficiency-reviewer` directly (no researcher re-dispatch needed — user supplied the missing facts; pass updated `intake/user-facts.md` so the reviewer sees the new context). After it returns, set `attempts.research_followup_pending_review = false` and fall through to the standard `research_sufficiency` branch.
-    - If `subset_r` is non-empty: re-dispatch each researcher listed in `subset_r` with its corresponding `recommended_followup_prompt` AND pass the updated `intake/user-facts.md` as additional input. After researchers return, dispatch `research-sufficiency-reviewer`, then set `attempts.research_followup_pending_review = false`, fall through to standard `research_sufficiency` branch.
+    - If `subset_r` is non-empty: apply **§"Proportional researcher re-dispatch (D)" from `skills/memo/references/phases/phase-6.md`** — do NOT blanket-re-run all `subset_r` researchers. If `sufficiency_followup.user_response.reply_scope == "informational"`, treat ALL `subset_r` gaps as `weak`: promote them to `drafting_warnings[]`, skip researcher re-dispatch, set `current_phase = research_sufficiency` and re-run `research-sufficiency-reviewer` directly. Otherwise re-dispatch ONLY the researchers whose gap `issue_coverage[].status == "missing"` (each with its `recommended_followup_prompt` + the updated `intake/user-facts.md`), and promote `weak` gaps to `drafting_warnings[]`. After researchers return (if any), dispatch `research-sufficiency-reviewer`, set `attempts.research_followup_pending_review = false`, fall through to the standard `research_sufficiency` branch.
 
 - `proceed` / `assume` → user explicitly skipped all follow-up questions; apply every `default_assumption_if_skipped` from Subset U.
   - Write the defaults to `intake/user-facts.md` under `## Follow-up answers (after sufficiency review — user accepted defaults at <ISO>)`.
@@ -565,6 +569,17 @@ Print summary of the completed task:
 - Template used
 - Status (approved, forced exit, or manual review required)
 - Stats
+
+**Workdir tidy (Phase 12.5) — run BEFORE end turn.** A full pipeline run always ends here (the `memo` skill hands off at `source_review_pending`; `continue` drives Phase 8→done), so THIS branch — not the `memo` skill's Phase 12 — is what actually executes the final cleanup. After the summary above, run the canonical tidy per `skills/memo/references/phases/phase-12_5.md`:
+
+```bash
+WORK_DIR="<state.json.work_dir>"
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tidy_workdir.py" --workdir "$WORK_DIR" \
+  || python "${CLAUDE_PLUGIN_ROOT}/scripts/tidy_workdir.py" --workdir "$WORK_DIR" \
+  || true
+```
+
+The script is self-guarding (it reads `state.json` and skips itself on `failed` / `cancelled_by_user` / `fallback_*` states) and best-effort (a tidy failure NEVER affects the delivered memo). It deletes top-level side-car `live-progress-*.html` snapshots, stray top-level `*.py`, and `*.tmp` leftovers — preserving the deliverable, the audit trail, and the master `live-progress.html`. Do NOT inline `find ... -delete`; the script is the single tested cross-platform entry point.
 
 End turn. Do NOT re-run the pipeline.
 

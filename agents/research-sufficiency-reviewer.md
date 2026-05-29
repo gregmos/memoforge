@@ -91,6 +91,8 @@ For each issue in `plan.md`, check:
 - `targeted_followup_needed`: one or more narrow gaps should be sent back to researchers once before drafting, OR sent back to the user as a Phase 6.6 follow-up question once before drafting (orchestrator partitions by `blocking_gaps[].target_agent`).
 - `insufficient_for_client_ready_memo`: the memo would be misleading without missing facts, missing primary law, or a manual legal research check.
 
+**`issue_coverage[].status` (`weak` vs `missing`) now governs follow-up cost (D).** The orchestrator re-dispatches a researcher ONLY for gaps you mark `missing` (no source support — a conclusion cannot stand without it). Gaps you mark `weak` (some support exists but it could be deeper) are disclosed as memo limitations via `drafting_warnings[]` rather than triggering a researcher re-run. Classify deliberately: reserve `missing` for genuinely conclusion-blocking gaps; use `weak` for "more would be nicer". This stops the pipeline from spending ~20 min re-researching low-consequence gaps (see `skills/memo/references/phases/phase-6.md` §"Proportional researcher re-dispatch (D)").
+
 **MANDATORY when `targeted_followup_needed` with `main-session` gaps.** When the verdict is `targeted_followup_needed` AND any `blocking_gap.target_agent == "main-session"`, every such `main-session` gap MUST have a non-null `followup_question` block. The orchestrator routes these into the Phase 6.6 user-followup gate (visualize elicitation widget OR text fallback) — NOT back to researchers. For `target_agent` values other than `"main-session"`, `followup_question` is null/absent (orchestrator uses `issue_coverage[].recommended_followup_prompt` to instruct researchers, same as today).
 
 ## Generating `followup_question` for main-session gaps

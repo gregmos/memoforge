@@ -92,7 +92,7 @@ Single source of truth for `state.json` shape. All skills and agents that read o
   // `max_iterations` lives ONLY under `config.max_iterations` (mode-dependent). No top-level field.
   "max_plan_edit_iterations": 5,                    // const; actively used by /continue plan_approval_pending branch to bound edit cycles
   "max_intake_iterations": 2,                       // DEPRECATED const (kept for backward compat — pre-0.0.30 logic tracked intake-edit cycles here; current intake parsers do not loop, so the field is unused. Phase 1 still writes it; validator requires its presence for legacy state shape; no logic reads it. Candidate for removal in a future release.)
-  "exit_threshold_score": 85,                       // DEPRECATED const (informational — earlier design used a numeric score threshold for reviewer approval; current logic gates only on `blocking_issues == []`, so this field has no effect. Phase 1 still writes it; validator requires its presence for legacy state shape; no logic reads it. Candidate for removal in a future release.)
+  "exit_threshold_score": 85,                       // REVIVED by C1 (was vestigial). The revision-mediator reads it as the "good enough" bar for the plateau early-exit (branch 3 of `agents/revision-mediator.md` §Exit conditions): when `aggregate_score_N ≥ exit_threshold_score` AND improvement over the prior iteration plateaued (< 1.0), the loop exits early on v<N> as `accepted_early_on_v<N>` instead of spending another iteration. Approval (zero-blocking) still gates `approved_on_v<N>` independently; this threshold only governs early convergence exits.
   "current_draft_path": null | "drafts/v<N>.md",    // owner: memo Phase 4 (sets v1), mediator (advances)
 
   "iterations": [                                   // owner: revision-mediator (appends one entry per completed iteration)
@@ -107,7 +107,8 @@ Single source of truth for `state.json` shape. All skills and agents that read o
         "counterarguments": {"score": <int>, "blocking_count": <int>, "path": "reviews/v<N>-counterarguments.json"} | {"status": "failed"}
       },
       "mediator_path": "reviews/v<N>-mediator.md",
-      "status": "approved" | "needs_revision" | "forced_exit",
+      "aggregate_score": <float>,                  // C1: mean of the reviewer scores above (1 decimal). Read across iterations by the mediator for convergence/regression detection.
+      "status": "approved" | "needs_revision" | "forced_exit" | "accepted_early",
       "completed_at": "<ISO>"
     }
   ],
@@ -123,7 +124,7 @@ Single source of truth for `state.json` shape. All skills and agents that read o
     | "approved_on_v<N>"
     | "forced_exit_on_v<N>_with_remaining_issues"
     | "manual_review_required_on_v<N>"
-    | "accepted_early_on_v<N>"                       // user picked "Accept v<N> as final" at end-of-iteration gate
+    | "accepted_early_on_v<N>"                       // C1 convergence: mediator exits early on v<N> when aggregate_score ≥ exit_threshold_score and improvement plateaued (< 1.0 over the prior iteration). (The legacy "Accept v<N> as final" user gate was removed in v0.0.44; the status string is reused.)
     | "fallback_research_summary_delivered"           // user-chosen research-summary mode (heartbeat → Phase 8 branch A); the docx banner says "RESEARCH SUMMARY MODE"
     | "fallback_summary_delivered",                  // universal catastrophic fallback per always-deliver.md (writes fallback-summary.md, may or may not invoke md_to_docx.py)
   "final_docx_path": null | "<absolute path>", // owner: memo Phase 11. ABSOLUTE path equal to `<state.json.work_dir>/memo-<slug>.docx` after a successful export, or `<state.json.work_dir>/memo-<slug>.md` if Phase 11 fell back to delivering markdown (per `always-deliver.md`). Validator (`scripts/validate_state.py`) requires `pathlib.Path(final_docx_path).is_file()` once `current_phase == "done"`. The legacy `final_artifacts_dir` field is removed — the audit trail folder IS `work_dir`.

@@ -79,10 +79,15 @@ Mediator writes:
 
 ## Exit conditions
 
-Mediator decides:
-1. **Every reviewer in `state.json.config.reviewer_list` reports `verdict = approved` and zero `blocking_issues`** → `state.json.final_status = approved_on_v<N>`, `current_phase = client_readiness`. Loop ends.
-2. **Blocking issues remain AND `current_iteration < state.json.config.max_iterations`** → `current_phase = revision_loop`, increment `current_iteration`. Main session dispatches `memo-writer` for v<N+1>.
-3. **`current_iteration == state.json.config.max_iterations` AND blocking issues remain** → `final_status = forced_exit_on_v<N>_with_remaining_issues`, `current_phase = client_readiness`. Loop ends with warning.
+The mediator records `aggregate_score` (mean of reviewer scores) per iteration and decides per the FIRST matching branch (full detail + state writes in `agents/revision-mediator.md` §Exit conditions):
+
+1. **Clean approval** — every reviewer `verdict = approved`, zero `blocking_issues` → `final_status = approved_on_v<N>`, `current_phase = client_readiness`. Loop ends.
+2. **Regression revert (C1)** — `N ≥ 2` AND `aggregate_score_N < aggregate_score_{N-1}` (the revision made it worse) → stop and deliver the best earlier draft: set `current_draft_path = drafts/v<best>.md`, `final_status = forced_exit_on_v<best>_with_remaining_issues`, `current_phase = client_readiness`. Don't chase a regressing loop.
+3. **Plateau early-exit (C1)** — `N ≥ 2` AND `current_iteration < max_iterations` AND `aggregate_score_N ≥ exit_threshold_score` (default 85) AND `0 ≤ (score_N − score_{N-1}) < 1.0` → exit early on v<N>: `final_status = accepted_early_on_v<N>`, `current_phase = client_readiness`. Above the quality bar with diminishing returns — another iteration isn't worth the time. (`N ≥ 2` because the Δ needs a prior iteration; at N=1, continue.)
+4. **Continue** — blockers remain AND `current_iteration < max_iterations` AND neither 2 nor 3 → `current_phase = revision_loop`, increment `current_iteration`. Main session pre-seeds `drafts/v<N+1>.md` (copy of v<N>) and dispatches `memo-writer` for targeted in-place edits.
+5. **Forced exit at max** — `current_iteration == max_iterations` AND blockers remain (no regression) → `final_status = forced_exit_on_v<N>_with_remaining_issues`, `current_phase = client_readiness`. Loop ends with warning.
+
+`accepted_early_on_v<N>` and `forced_exit_on_v<N>_with_remaining_issues` are existing validated `final_status` values (docx emits a warning banner for each). C1 reuses them and revives the previously-vestigial `exit_threshold_score` as the branch-3 bar.
 
 ## Reviewer isolation contract
 

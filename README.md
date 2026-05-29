@@ -2,7 +2,7 @@
 
 > **From one legal question to a finished `.docx` memorandum, with sources cited and contrary authority surfaced — in a single command.**
 
-![version](https://img.shields.io/badge/version-1.0.0-blue) ![license](https://img.shields.io/badge/license-MIT-green) ![for](https://img.shields.io/badge/built%20for-Cowork-purple)
+![version](https://img.shields.io/badge/version-1.1.1-blue) ![license](https://img.shields.io/badge/license-MIT-green) ![for](https://img.shields.io/badge/built%20for-Cowork-purple)
 
 ---
 
@@ -34,7 +34,7 @@ After one command and a few approval clicks, you walk away with:
 
 ### 1 · Install
 
-In Cowork: **Settings → Plugins → drag-and-drop `memoforge-1.0.0.zip`** from the [Releases page](../../releases). The plugin auto-registers two bundled MCP servers via `.mcp.json`.
+In Cowork: **Settings → Plugins → drag-and-drop `memoforge-1.1.1.zip`** from the [Releases page](../../releases). The plugin auto-registers two bundled MCP servers via `.mcp.json`.
 
 ### 2 · Connect the two legal databases
 

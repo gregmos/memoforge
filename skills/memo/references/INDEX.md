@@ -5,6 +5,8 @@ Quick map of the canonical reference documents under `skills/memo/references/` a
 | Topic | Canonical document | Notes |
 |---|---|---|
 | Pipeline phase ordering, owners, inputs, outputs, gates, mode branches | `pipeline-contract.md` | Single source of truth for the phase table. All other docs cite this. |
+| Orchestrator control flow per phase (dispatch, **parallelism**, state writes, events, turn) | `skills/memo/PHASE-MACHINE.md` (in `skills/memo/`) | Compact cheat-sheet, **re-read at every phase boundary** (summarization defense); authoritative for control flow. Its Globals carry the essence of the progress/events/live-progress contracts, so those are demand-read for format only. |
+| Full step-by-step procedure for each pipeline phase | `skills/memo/references/phases/phase-<n>.md` | Verbatim phase prose extracted from SKILL.md (B1b router refactor). `SKILL.md` §"Phase procedures" maps `current_phase` → file; read the file on entering that phase. SKILL.md itself is now a thin router (~140 lines). |
 | `state.json` canonical schema (field names, types, ownership) | `state-schema.md` (in `skills/memo/`, not `references/`) | Validator enforces a subset of this; see `scripts/validate_state.py`. |
 | Mode-specific config matrix (Brief / Full) | `modes.md` | Drives `MODE_CANONICAL_CONFIG`, `MODE_RESEARCHER_SET`, `MODE_TEMPLATE_ID` in the validator. |
 | Fallback chain (per-phase failure modes + banner text) | `always-deliver.md` | Universal fallback at the bottom — pipeline never ends silently. |
@@ -33,10 +35,11 @@ If two documents in this list appear to disagree, follow this order (highest aut
 2. `pipeline-contract.md` (canonical contract — declared as such in its preamble)
 3. `state-schema.md` (canonical state schema)
 4. `modes.md`, `always-deliver.md`, `mcp-ratelimit-contract.md`, `logging-contract.md`, `operating-contract.md`, `progress-contract.md`, `progress-tracker.md`, `widget-schemas.md`, `live-progress-contract.md`, `events-contract.md` (canonical for their topic)
-5. `skills/memo/SKILL.md` / `skills/continue/SKILL.md` / `skills/status/SKILL.md` (orchestration)
-6. `lib/prose-style.md` (domain conventions)
-7. `lib/docx-render/README.md` (visual conventions)
-8. Agent prompts in `agents/*.md`
+5. `skills/memo/PHASE-MACHINE.md` (authoritative for orchestrator **control flow** — dispatch/parallelism/state-writes/events/turn; SKILL.md prose yields to it on control-flow conflicts)
+6. `skills/memo/SKILL.md` / `skills/continue/SKILL.md` / `skills/status/SKILL.md` (orchestration prose + rationale)
+7. `lib/prose-style.md` (domain conventions)
+8. `lib/docx-render/README.md` (visual conventions)
+9. Agent prompts in `agents/*.md`
 
 When a lower-tier doc looks stale, file a follow-up to bring it in sync — do not let the lower-tier wording override the higher-tier source.
 
@@ -44,7 +47,9 @@ When a lower-tier doc looks stale, file a follow-up to bring it in sync — do n
 
 | Phase | First read | Then |
 |---|---|---|
-| pre-Phase-1 (always) | `operating-contract.md` + `progress-contract.md` + `events-contract.md` + `live-progress-contract.md` | Activation preamble — read each once before any pipeline work |
+| pre-Phase-1 (always) | `PHASE-MACHINE.md` + `operating-contract.md` | Activation preamble. The cheat-sheet (control flow + the essence of progress/events/live-progress) is the always-read map; `operating-contract.md` carries the global invariants. |
+| **every phase boundary (always)** | `PHASE-MACHINE.md` (re-read the current `current_phase` row) | Summarization defense — re-grounds dispatch/parallelism/events/turn in fresh context |
+| on first need (format/taxonomy) | `progress-contract.md` / `events-contract.md` / `live-progress-contract.md` | Demand-read for exact format the first time you emit that kind of thing — NOT every activation (their per-phase essence is in the cheat-sheet) |
 | 1 init | `state-schema.md` for the Phase 1 init template | — |
 | 1 step 3.5 live-progress mint | `live-progress-contract.md` §"How the channel works" | mint artifact, write `state.json.live_progress` |
 | 1.5 mode pick | `modes.md` + `widget-schemas.md §Mode mockup` | `progress-tracker.md` (Milestone 1) if visualize enabled |

@@ -88,7 +88,7 @@ allowed-tools: Read, Write, Edit, Bash, Task, AskUserQuestion, WebFetch, WebSear
                mcp__plugin_memoforge_legal-data-hunter__*
 ```
 
-The `mcp__*` wildcard is required because in Cowork (the primary host) MCP tools surface under an opaque UUID namespace (see Phase 1 precheck in `skills/memo/SKILL.md:186`), not the static `mcp__plugin_memoforge_*` prefix the manifest declares. The plugin-scoped prefix is retained as a hint for hosts that honor it; the wildcard ensures MCP works wherever the UUID-prefix policy applies. The `continue` skill frontmatter mirrors this set so resumed research / follow-up / currency dispatches inherit the same MCP / WebFetch / WebSearch surface.
+The `mcp__*` wildcard is required because in Cowork (the primary host) MCP tools surface under an opaque UUID namespace (see the Phase 1 MCP precheck in `skills/memo/references/phases/phase-1.md`), not the static `mcp__plugin_memoforge_*` prefix the manifest declares. The plugin-scoped prefix is retained as a hint for hosts that honor it; the wildcard ensures MCP works wherever the UUID-prefix policy applies. The `continue` skill frontmatter mirrors this set so resumed research / follow-up / currency dispatches inherit the same MCP / WebFetch / WebSearch surface.
 
 Subagents that omit `tools:` in their frontmatter inherit the entire set. Subagents that declare `tools:` get exactly that set (and no MCP unless `mcp__*` or a matching namespace prefix is explicitly listed).
 
@@ -98,7 +98,7 @@ Per-agent tool sets:
 |-------|----------------------|-----|
 | `fact-assumption-analyst` | (omitted — inherits, as of 0.0.39) | YES (full set) — previously had an explicit MCP allowlist hard-coding the plugin namespace; that was removed in 0.0.39 to match the function-name detection policy |
 | `statutory-researcher`, `case-law-researcher`, `currency-checker`, `doctrinal-researcher` | (omitted — inherits) | YES (full set) |
-| `memo-writer`, `revision-mediator` | `Read, Write, Edit` | NO |
+| `memo-writer`, `revision-mediator` | `Read, Write, Edit, Bash, mcp__cowork__update_artifact` | NO (Bash powers `render_live_progress.py` for the live-progress sidebar + `mcp__cowork__update_artifact` is the artifact tool — neither grants research MCP / WebFetch / WebSearch. Bash was added so these agents can render live-progress; earlier versions lacked it, which caused the `live_progress_error: Bash not in allowlist` log lines seen pre-v1.0.x.) |
 | `citation-auditor` | `Read, Write, Glob` (Glob added in 0.0.39 so verbatim verification can enumerate `research/raw/`) | NO |
 | `counterargument-reviewer`, `logic-reviewer`, `clarity-reviewer`, `style-reviewer`, `client-readiness-reviewer` | `Read, Write` | NO |
 | `research-sufficiency-reviewer`, `source-pack-builder` | `Read, Write, Glob, Grep` | NO |

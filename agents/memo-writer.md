@@ -69,7 +69,15 @@ v1: initial draft based on research, <N> issues covered, template=<template_id>
 
 ## Output (vN)
 
-Write `drafts/v<N>.md`. APPEND to `changelog.md`:
+**Targeted in-place edits (default).** The orchestrator pre-seeds `drafts/v<N>.md` as a byte copy of `drafts/v<N-1>.md` BEFORE dispatching you. Your job on vN is to **`Edit` that file in place**, changing ONLY:
+- the sections named in `reviews/v<N-1>-mediator.md` blocking instructions, AND
+- their explicit cross-references — the Exec-Summary bullet, the Conclusion / recommendation-matrix row, and the Risk line that cite a section you changed (cross-section consistency self-check still applies to touched sections).
+
+Leave every clean section byte-stable. Do NOT regenerate the whole memo — full regeneration re-touches sections that were already fine, costs output-token time, and introduces regressions in passing reviewers (the exact failure observed on 2026-05-28: logic 91→79 between v2 and v3). Use `Edit` (not `Write`) so untouched text is provably unchanged.
+
+**Full-rewrite fallback (exception).** Only `Write` the whole `drafts/v<N>.md` if the mediator's blocking issues span **more than half the analytical sections** OR are structural/template-level (wrong section order, missing required section, template-cap overflow). In that case note `full_rewrite: true` in the changelog entry so the diff is explainable.
+
+APPEND to `changelog.md`:
 ```
 v<N> (after revising v<N-1>): <bullet list of concrete changes by section, neutral tone, no praise/blame>
 ```
@@ -263,7 +271,7 @@ This guard exists because users who pick Brief expect a 2-3 page memo, not a 9-p
 
 ## On vN revisions
 
-Read `reviews/v<N-1>-mediator.md` and apply the consolidated revisions section by section. Don't go beyond what the mediator listed. If a mediator instruction is unclear, apply your best interpretation and note it in the changelog.
+`drafts/v<N>.md` is pre-seeded with v<N-1>'s content (orchestrator copied it before dispatch). Read `reviews/v<N-1>-mediator.md` and apply the consolidated revisions **as in-place `Edit`s to the named sections only** (plus the cross-references listed in §Output (vN)). Don't go beyond what the mediator listed, and don't re-touch sections the mediator did not flag — an untouched section must come out byte-identical to v<N-1>. If a mediator instruction is unclear, apply your best interpretation and note it in the changelog. Use the full-rewrite fallback only under the §Output (vN) conditions (blockers span >half the analytical sections, or structural/template-level).
 
 For citation/source/currency instructions, verify the replacement text against the passed research files. If the research file does not support a replacement, remove or soften the claim and flag the limitation in the memo's Risks/Open questions section.
 

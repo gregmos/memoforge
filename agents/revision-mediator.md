@@ -64,18 +64,32 @@ Read `state.json.config.prose_style_path`. Two cases:
 
 ## Exit conditions
 
-- **Every reviewer in `state.json.config.reviewer_list` returned `verdict: approved`, none has `status: failed`, and all have zero blocking issues** → exit loop.
-  - Set `state.json.final_status = approved_on_v<N>`.
-  - Set `current_phase = client_readiness`.
-  - Set `remaining_blocking_issues = []`.
-- **At least one blocking issue remains AND `current_iteration < state.json.config.max_iterations`** → continue loop.
-  - Set `current_phase = revision_loop`.
-  - Set `current_iteration = N + 1`.
-  - Set `remaining_blocking_issues` to the consolidated blocking issues, so resume/status/export can surface the latest unresolved items if the task is interrupted.
-- **`current_iteration == state.json.config.max_iterations` AND blockers remain** → forced exit.
-  - Set `final_status = forced_exit_on_v<N>_with_remaining_issues`.
-  - Set `current_phase = client_readiness`.
-  - Set `remaining_blocking_issues` to the consolidated blocking issues for the docx warning banner.
+**First compute the score trend (C1 convergence).** Compute `aggregate_score_N` = arithmetic mean of the `overall_score` values of the reviewers in `state.json.config.reviewer_list`, rounded to 1 decimal. Record it in the iteration entry (see §State.json update format). Read prior scores from `state.json.iterations[*].aggregate_score`. Let `best_iteration` = the iteration in `1..N` with the highest `aggregate_score` (ties → latest), and `best_draft_path = drafts/v<best_iteration>.md`. Read `state.json.exit_threshold_score` (default 85) and `state.json.config.max_iterations`.
+
+Then apply the FIRST matching branch:
+
+1. **Clean approval** — every reviewer in `reviewer_list` returned `verdict: approved`, none `status: failed`, all zero blocking issues → exit loop.
+   - `final_status = approved_on_v<N>`; `current_phase = client_readiness`; `remaining_blocking_issues = []`. (No draft revert — v<N> is the approved draft.)
+
+2. **Regression revert (NEW)** — `N ≥ 2` AND `aggregate_score_N < aggregate_score_{N-1}` (the latest revision made the memo *worse*) → stop the loop and deliver the best earlier draft rather than the regressed one or another doomed iteration.
+   - `current_draft_path = best_draft_path` (an earlier v<best_iteration>, which scored higher).
+   - `final_status = forced_exit_on_v<best_iteration>_with_remaining_issues`.
+   - `current_phase = client_readiness`.
+   - `remaining_blocking_issues` = the blocking issues from `reviews/v<best_iteration>-mediator.md` (Read it to recover that draft's consolidated blockers; if unreadable, fall back to v<N>'s consolidated blockers). These feed the docx banner.
+   - In the report Verdict line, note: "regression: v<N> (<sN>) < v<best_iteration> (<sbest>) — delivering best draft v<best_iteration>."
+
+3. **Plateau early-exit (NEW)** — `N ≥ 2` AND `current_iteration < max_iterations` AND `aggregate_score_N ≥ exit_threshold_score` AND `0 ≤ (aggregate_score_N − aggregate_score_{N-1}) < 1.0` (above the quality bar, improvement has flattened) → exit early instead of spending another full iteration on diminishing returns. (`N ≥ 2` is required because the Δ term needs a prior iteration; at N=1 there is no trend, so fall through to branch 4 and continue.)
+   - `current_draft_path` stays `drafts/v<N>.md` (it is the best). `final_status = accepted_early_on_v<N>`; `current_phase = client_readiness`.
+   - `remaining_blocking_issues` = v<N>'s consolidated blockers (form-tier issues disclosed in the docx banner).
+   - In the report Verdict line, note: "converged: v<N> (<sN>) ≥ threshold <T>, Δ over v<N-1> = <delta> (< 1.0) — exiting early."
+
+4. **Continue loop** — blocking issues remain AND `current_iteration < max_iterations` AND neither branch 2 nor 3 fired → continue.
+   - `current_phase = revision_loop`; `current_iteration = N + 1`; `remaining_blocking_issues` = the consolidated blocking issues (so resume/status/export can surface the latest unresolved items if interrupted).
+
+5. **Forced exit at max** — `current_iteration == max_iterations` AND blockers remain (and no regression, else branch 2 already handled it) → forced exit on the current draft.
+   - `final_status = forced_exit_on_v<N>_with_remaining_issues`; `current_phase = client_readiness`; `remaining_blocking_issues` = consolidated blockers for the docx banner.
+
+**Note on `accepted_early_on_v<N>` and `forced_exit_on_v<N>_with_remaining_issues`:** both are existing `final_status` enum values (validated by `scripts/validate_state.py`; the docx renderer emits a warning banner for each). C1 reuses them — no new status strings. The `exit_threshold_score` field (previously vestigial) is revived by branch 3 as the "good enough" bar.
 
 ## Output format (reviews/vN-mediator.md)
 
@@ -131,7 +145,8 @@ Add to `state.json.iterations` (array). Include only the reviewers in `state.jso
     "counterarguments": {"score": <s>, "blocking_count": <n>, "path": "reviews/v<N>-counterarguments.json"}
   },
   "mediator_path": "reviews/v<N>-mediator.md",
-  "status": "approved" | "needs_revision" | "forced_exit",
+  "aggregate_score": <float — mean of the reviewer overall_score values in reviewer_list, 1 decimal; C1 convergence reads this across iterations>,
+  "status": "approved" | "needs_revision" | "forced_exit" | "accepted_early",
   "completed_at": "<ISO timestamp>"
 }
 ```
